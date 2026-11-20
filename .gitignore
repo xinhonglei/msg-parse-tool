@@ -1,5 +1,6 @@
 .tmp_*
 .pytest_tmp*/
 *.log
+*_源码.txt
 Thumbs.db
 .DS_Store
