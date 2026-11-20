@@ -113,6 +113,13 @@ ul.issues li.e{color:var(--req)}
 ul.issues li.w{color:var(--warn)}
 .extra .row{grid-template-columns:34px 190px minmax(120px,1fr) 104px 152px}
 .pathsel{font-size:11px;padding:2px 4px}
+/* 结构化额外字段（数组 / 对象）的展示 */
+.exd{margin-bottom:3px}
+.exd summary{font-size:11px;color:var(--txt3);cursor:pointer;user-select:none}
+.expre{max-height:170px;overflow:auto;font-size:11px;line-height:1.5;background:#fafbfc;
+ border:1px solid var(--line);border-radius:6px;padding:6px;margin:4px 0;white-space:pre-wrap;
+ word-break:break-all;font-family:Consolas,monospace}
+.extag{font-size:11px;color:var(--txt3);white-space:nowrap}
 .hd .badge{font-size:11px;background:var(--extra-bg);color:var(--extra);padding:1px 7px;
  border-radius:10px;font-weight:600}
 .hd .badge.g{background:var(--pri-bg);color:var(--pri)}
@@ -210,7 +217,7 @@ ul.issues li.w{color:var(--warn)}
 <header>
   <div class="hdrow">
     <h1>报文解析生成工具</h1>
-    <span class="ver" id="verBadge">V1.4.0</span>
+    <span class="ver" id="verBadge">V1.4.1</span>
     <span class="sub">CIIS 报文 / RMSCI 报文</span>
     <span class="spacer"></span>
     <div class="toolbar">
@@ -326,8 +333,9 @@ ul.issues li.w{color:var(--warn)}
         <div class="optrow">
           <label class="opt"><input type="checkbox" id="optNum"> 数值型字段输出为数字</label>
           <label class="opt"><input type="checkbox" id="optNull"> 空值输出 null（默认 ""）</label>
-          <label class="opt" id="wrapLab" style="display:none">
-            <input type="checkbox" id="optWrap"> 带回网关外层包装</label>
+          <label class="opt" id="wrapLab" style="display:none"
+                 title="勾选后导出会还原粘贴时的外层：网关 params/data 包装、数组外包、整段字符串化">
+            <input type="checkbox" id="optWrap"> 带回原始外层包装</label>
         </div>
         <pre class="out" id="outTxt"></pre>
         <div class="msg" id="outMsg"></div>
@@ -389,7 +397,7 @@ ul.issues li.w{color:var(--warn)}
 <div class="chg" id="chgCard">
   <div class="card">
     <div class="hd"><span class="t">版本变更日志</span>
-      <span class="badge g" id="chgVer">V1.4.0</span>
+      <span class="badge g" id="chgVer">V1.4.1</span>
       <span class="d">协议与填写值存本机浏览器（localStorage）；另有磁盘备份可写入真实 json 文件，换电脑把它一起拷走即可恢复</span>
     </div>
     <div class="bd pad" id="chgBody"></div>
@@ -498,8 +506,17 @@ let SCALARS=[], MAP={}, TOPKEYS=[], ARRS={};
 const LS='rms_repo_msg_tool_v1';          // V1.2 旧 key，仅作迁移来源
 const LS_MODEL='rms_repo_msg_model_v1';   // V1.2 旧 key，仅作迁移来源
 const LS_PROTO='rms_repo_msg_protocols_v2';
-const TOOL_VERSION='1.4.0';
+const TOOL_VERSION='1.4.1';
 const CHANGELOG=[
+ {v:'1.4.1', d:'2026-11-20', items:[
+   '修复粘贴 ["{\\"tradeInfo\\":…}"] 这类报文解析失败（报「顶层不是对象」）的问题',
+   '新增拆外层：数组外包、整段字符串化、字符串里再套数组、从日志复制的多层反斜杠转义，逐层剥到真实报文对象',
+   '导出时可勾选「带回原始外层包装」，按粘贴时的形态原样还原（["{…}"] / "{…}" / [{…}]）',
+   '匹配不到协议的数组 / 对象字段（如 exchangeBondList、requestInfo）按原结构导出，不再被压成字符串',
+   '布尔与数字保真：isCoupon:true 导出 true、dealer:1074 导出 1074，不再一律变成字符串',
+   '解析失败的提示改为具体原因：空数组、数组首项是 null / 数字、剥壳超过 8 层',
+   '粘贴含多条报文时只取第 1 条并在提示里说明条数'
+ ]},
  {v:'1.4.0', d:'2026-11-09', items:[
    '新增磁盘备份：协议库可自动写入本机真实 json 文件，换电脑拷走文件即可用「恢复」还原',
    '顶栏加 备份到… / 备份 / 恢复 / 导出全部，状态点显示「已备份 15:42 · N 份协议」',
@@ -558,7 +575,7 @@ function recompute(){
 let S = null;
 function blank(){
   const st={v:{},ck:{},arr:{},ex:[],mode:'flat',fmt:'pretty',num:false,nul:false,
-            wrap:null,useWrap:false};
+            wrap:null,useWrap:false,outer:[],ty:{}};
   SCALARS.forEach(f=>{st.v[f.k]='';st.ck[f.k]=false});
   for(const a in ARRS) st.arr[a]={on:false,cols:{},rows:[mkRow(a)]},
     ARRS[a].fields.forEach(f=>st.arr[a].cols[f.k]=true);
@@ -596,6 +613,8 @@ function normalizeState(o){
   const b=blank(); if(!o) return b;
   b.mode=o.mode||'flat'; b.fmt=o.fmt||'pretty';
   b.num=!!o.num; b.nul=!!o.nul; b.wrap=o.wrap||null; b.useWrap=!!o.useWrap;
+  b.outer=Array.isArray(o.outer)?o.outer.filter(x=>x&&(x.t==='str'||x.t==='arr')):[];
+  b.ty=(o.ty&&typeof o.ty==='object')?o.ty:{};
   if(o.v&&typeof o.v==='object') for(const k in b.v) if(k in o.v) b.v[k]=o.v[k]==null?'':o.v[k];
   if(o.ck&&typeof o.ck==='object') for(const k in b.ck) if(k in o.ck) b.ck[k]=!!o.ck[k];
   for(const a in b.arr){
@@ -606,7 +625,9 @@ function normalizeState(o){
     b.arr[a].rows=rows.map(r=>Object.assign(mkRow(a),r||{}));
   }
   if(Array.isArray(o.ex)) b.ex=o.ex.filter(e=>e&&e.k)
-    .map(e=>({k:e.k,v:e.v==null?'':e.v,on:!!e.on,at:e.at||'root'}));
+    .map(e=>({k:e.k,v:e.v==null?'':e.v,on:!!e.on,at:e.at||'root',
+      raw:(e.raw&&typeof e.raw==='object')?e.raw:undefined,
+      edited:!!e.edited}));
   return b;
 }
 /* 编辑只更新内存引用，写盘走防抖；切换协议 / 关闭页面必须立即落盘 */
@@ -699,15 +720,22 @@ function renderExtra(){
   const rows=S.ex.map((e,i)=>{
     const hint=ALIAS_HINT[e.k]?'<div class="note">疑似对应标准字段 <b>'+esc(ALIAS_HINT[e.k])+
       '</b>（'+esc((MAP[ALIAS_HINT[e.k]]||{}).n||'')+'）</div>':'';
-    const sel='<select class="pathsel exmap" data-i="'+i+'"><option value="">映射到…</option>'+
+    const isObj=e.raw!==undefined;
+    const kindTxt=isObj?(Array.isArray(e.raw)?('数组 '+e.raw.length+' 项'):('对象 '+Object.keys(e.raw).length+' 字段')):'';
+    const valCell=isObj
+      ? '<div><details class="exd"><summary>'+esc(kindTxt)+' · 导出按原结构</summary>'+
+        '<pre class="expre">'+esc(JSON.stringify(e.raw,null,2))+'</pre></details>'+
+        '<input type="text" class="exv" data-i="'+i+'" value="'+esc(e.v)+'"></div>'
+      : '<div><input type="text" class="exv" data-i="'+i+'" value="'+esc(e.v)+'"></div>';
+    const sel=isObj?'<span class="extag">结构化，不可映射</span>':
+      '<select class="pathsel exmap" data-i="'+i+'"><option value="">映射到…</option>'+
       SCALARS.map(f=>'<option value="'+f.k+'">'+esc(f.k+' / '+f.n)+'</option>').join('')+'</select>';
     const pos='<select class="pathsel expos" data-i="'+i+'" title="嵌套模式下该字段放在哪一层">'+
       '<option value="root"'+(e.at!=='tradeInfo'?' selected':'')+'>根节点</option>'+
       '<option value="tradeInfo"'+(e.at==='tradeInfo'?' selected':'')+'>tradeInfo</option></select>';
     return '<div class="row" data-search="'+esc(e.k.toLowerCase())+'">'+
       '<div><input type="checkbox" class="exck" data-i="'+i+'"'+(e.on?' checked':'')+'></div>'+
-      '<div class="k">'+esc(e.k)+'</div>'+
-      '<div><input type="text" class="exv" data-i="'+i+'" value="'+esc(e.v)+'"></div>'+
+      '<div class="k">'+esc(e.k)+'</div>'+ valCell +
       '<div>'+pos+'</div>'+
       '<div style="display:flex;gap:4px">'+sel+
         '<button class="sm exdel" data-i="'+i+'">删</button></div>'+hint+'</div>';
@@ -727,17 +755,41 @@ function coerce(f,raw){
     return Number(s.trim());
   return s;
 }
+/* 值输出：导入时原值是数字 / 布尔就保持原类型，协议里的 Java 类型不覆盖真实类型 */
+function cv(f,k,raw){
+  const s=raw==null?'':String(raw);
+  const ty=k?((S.ty||{})[k]||''):'';
+  if(s!==''){
+    if(ty==='b'&&(s==='true'||s==='false')) return s==='true';
+    if(ty==='n'&&/^-?\d+(\.\d+)?$/.test(s.trim())) return Number(s.trim());
+    if(ty==='o'){ try{ return JSON.parse(s) }catch(_){ return raw } }  // 协议写标量、报文给对象时也保真
+  }
+  return coerce(f,raw);
+}
+/* 额外字段输出：数组 / 对象按原结构写回，标量按原类型（不改就成了字符串） */
+function exOut(e){
+  if(e.raw!==undefined){
+    if(!e.edited) return JSON.parse(JSON.stringify(e.raw));
+    const t=String(e.v==null?'':e.v).trim();     // 改过：能当 JSON 解析就用解析结果
+    if(t&&/^[[{]/.test(t)){ try{ return JSON.parse(t) }catch(_){} }
+    return t===''?emptyVal():t;
+  }
+  const t=String(e.v==null?'':e.v);
+  if(e.type==='b'){ if(t==='true')return true; if(t==='false')return false }
+  if(e.type==='n'&&t.trim()!==''&&/^-?\d+(\.\d+)?$/.test(t.trim())) return Number(t.trim());
+  return coerce(null,e.v);
+}
 function buildPayload(){
   const trade={},root={};
-  MODEL.env.forEach(f=>{if(S.ck[f.k])root[f.k]=coerce(f,S.v[f.k])});
-  if(MODEL.main && MODEL.main.fields) MODEL.main.fields.forEach(f=>{if(S.ck[f.k])trade[f.k]=coerce(f,S.v[f.k])});
+  MODEL.env.forEach(f=>{if(S.ck[f.k])root[f.k]=cv(f,f.k,S.v[f.k])});
+  if(MODEL.main && MODEL.main.fields) MODEL.main.fields.forEach(f=>{if(S.ck[f.k])trade[f.k]=cv(f,f.k,S.v[f.k])});
   const arrOut={};
   for(const a in ARRS){const st=S.arr[a];if(!st.on)continue;
     arrOut[a]=st.rows.map(r=>{const o={};ARRS[a].fields.forEach(f=>{
-      if(st.cols[f.k])o[f.k]=coerce(f,r[f.k])});return o});}
+      if(st.cols[f.k])o[f.k]=cv(f,f.k,r[f.k])});return o});}
   S.ex.forEach(e=>{if(!e.on)return;
     const tgt=(e.at==='tradeInfo'&&S.mode==='nested')?trade:(S.mode==='nested'?root:trade);
-    tgt[e.k]=coerce(null,e.v);});
+    tgt[e.k]=exOut(e);});
   let payload;
   if(S.mode==='nested' && MODEL.main){
     const ti=Object.assign({},trade,arrOut);
@@ -746,10 +798,13 @@ function buildPayload(){
   }else{
     payload=Object.assign({},root,trade,arrOut);
   }
-  if(S.useWrap&&S.wrap){
-    const w=JSON.parse(JSON.stringify(S.wrap.tpl));
-    setPath(w,S.wrap.path,S.wrap.str?JSON.stringify(payload):payload);
-    return w;
+  if(S.useWrap){
+    if(S.wrap){
+      const w=JSON.parse(JSON.stringify(S.wrap.tpl));
+      setPath(w,S.wrap.path,S.wrap.str?JSON.stringify(payload):payload);
+      payload=w;
+    }
+    if(S.outer&&S.outer.length) payload=rewrap(payload,S.outer);  // 逆序套回数组 / 字符串外壳
   }
   return payload;
 }
@@ -869,6 +924,53 @@ function tolerantParse(t){
   f=f.replace(/'/g,'"').replace(/([{,]\s*)([A-Za-z_$][\w$]*)\s*:/g,'$1"$2":');
   return JSON.parse(f);
 }
+/* 严格优先解析：先按标准 JSON 解析（才能正确还原 \" 转义），失败再走容错，
+   仍失败则逐层去掉转义字符重试 —— 覆盖「从日志里复制出多层反斜杠」的情况 */
+function parseLoose(s){
+  let cur=String(s).trim();
+  for(let i=0;i<6;i++){
+    try{ return JSON.parse(cur) }catch(e){}
+    try{ return tolerantParse(cur) }catch(e){}
+    const nx=cur.replace(/\\\\/g,'\\').replace(/\\"/g,'"').replace(/\\'/g,"'");
+    if(nx===cur) break;
+    cur=nx;
+  }
+  throw new Error('内容不是可解析的 JSON 文本');
+}
+/* 循环剥壳：字符串→解析、数组→取首项（并记录条数）、数组套数组继续。
+   返回 { value, chain }，chain 形如 [{t:'arr',n:1},{t:'str'}]，用于导出时逆序还原 */
+function peel(v){
+  const chain=[];
+  for(let i=0;i<8;i++){
+    if(typeof v==='string'){
+      if(!v.trim()) throw new Error('报文是空字符串');
+      chain.push({t:'str'});
+      v=parseLoose(v);
+      continue;
+    }
+    if(Array.isArray(v)){
+      if(!v.length) throw new Error('报文是空数组 []，没有可解析的内容');
+      chain.push({t:'arr',n:v.length});
+      v=v[0];
+      continue;
+    }
+    break;
+  }
+  if(v===null) throw new Error('去掉外层后是 null，不是报文对象');
+  if(Array.isArray(v)) throw new Error('外层嵌套超过 8 层，结构无法识别');
+  if(typeof v!=='object') throw new Error('去掉外层后是 '+typeof v+'（'+JSON.stringify(v)+'），不是报文对象');
+  return {value:v,chain:chain};
+}
+/* 导出时按剥壳链逆序还原：[{t:'arr'},{t:'str'}] → 先 JSON.stringify 再包数组 */
+function rewrap(payload,chain){
+  let out=payload;
+  for(let i=(chain||[]).length-1;i>=0;i--){
+    const c=chain[i];
+    if(c.t==='str') out=JSON.stringify(out);
+    else if(c.t==='arr') out=[out];
+  }
+  return out;
+}
 function unwrap(o){
   const keys=['params','param','data','body','request','payload'];
   for(const k of keys){
@@ -929,20 +1031,27 @@ function setDeep(obj,key,val){
 function doImport(txt){
   txt=(txt||'').trim();
   if(!txt) return msg('inMsg','err','内容为空');
-  let raw;
-  try{
-    raw = looksLikeKV(txt) ? parseKV(txt) : tolerantParse(txt);
-  }catch(e){
-    return msg('inMsg','err','解析失败：'+(looksLikeKV(txt)?'Key=Value 格式有误（应为 每行 key=value）':'请确认粘贴的是 JSON 报文。'));
-  }
-  if(Array.isArray(raw)) raw=raw[0];
-  if(!raw||typeof raw!=='object') return msg('inMsg','err','解析失败：顶层不是对象');
   const srcKV=looksLikeKV(txt);
+  let raw, chain=[], multi=0;
+  try{
+    if(srcKV){ raw=parseKV(txt); }
+    else{
+      const r=peel(parseLoose(txt));
+      raw=r.value; chain=r.chain;
+      const first=chain.find(c=>c.t==='arr');
+      if(first&&first.n>1) multi=first.n;   // 多条报文：只取第 1 条
+    }
+  }catch(e){
+    return msg('inMsg','err','解析失败：'+(srcKV?'Key=Value 格式有误（应为 每行 key=value）':e.message));
+  }
+  if(!raw||typeof raw!=='object') return msg('inMsg','err','解析失败：顶层不是对象');
 
   const u=unwrap(raw);
   const p=u.payload;
-  S.wrap=u.wrap; S.useWrap=!!u.wrap;
-  $('wrapLab').style.display=u.wrap?'flex':'none'; $('optWrap').checked=!!u.wrap;
+  const hasWrap=!!(u.wrap||chain.length);
+  S.wrap=u.wrap; S.outer=chain; S.ty={};
+  S.useWrap=hasWrap;
+  $('wrapLab').style.display=hasWrap?'flex':'none'; $('optWrap').checked=hasWrap;
 
   const nested = p.tradeInfo && typeof p.tradeInfo==='object';
   S.mode = nested?'nested':'flat';
@@ -972,10 +1081,19 @@ function doImport(txt){
         if(!ARRS[k].fields.some(f=>st.cols[f.k])) ARRS[k].fields.forEach(f=>st.cols[f.k]=true);
         hit++;continue;
       }
-      if(MAP[k]){S.v[k]=(v==null?'':(typeof v==='object'?JSON.stringify(v):String(v)));
-        S.ck[k]=true;hit++;if(typeof v==='number')numSeen++;continue}
+      if(MAP[k]){
+        S.v[k]=(v==null?'':(typeof v==='object'?JSON.stringify(v):String(v)));
+        S.ck[k]=true;hit++;
+        if(v&&typeof v==='object') S.ty[k]='o';
+        else if(typeof v==='number') S.ty[k]='n';
+        else if(typeof v==='boolean') S.ty[k]='b';
+        if(typeof v==='number')numSeen++;
+        continue;
+      }
       S.ex.push({k:k,v:(v==null?'':(typeof v==='object'?JSON.stringify(v):String(v))),
-        on:true,at:at});ex++;
+        on:true,at:at,
+        raw:(v&&typeof v==='object')?v:undefined,edited:false,
+        type:(typeof v==='boolean')?'b':(typeof v==='number')?'n':'s'});ex++;
     }
   };
   flat(p,'root');
@@ -987,8 +1105,13 @@ function doImport(txt){
   if(ex) m+='，额外字段 '+ex+' 项（见左下「额外字段」）';
   m+='\n结构判定：'+(srcKV?'Key=Value 格式':(nested?'嵌套 tradeInfo':'扁平'));
   if(u.wrap) m+='；已识别网关外层包装（'+u.wrap.path.join('.')+'）';
+  if(chain.length) m+='；已剥除外层：'+
+    chain.map(c=>c.t==='arr'?('数组('+c.n+')'):'字符串').join(' → ')+
+    '\n导出时勾选「带回原始外层」可按原形态还原。';
+  if(multi) m+='\n注意：粘贴内容含 '+multi+' 条报文，已导入第 1 条。';
   if(numSeen) m+='\n检测到 '+numSeen+' 个数值型（不带引号）字段，已自动开启「数值输出为数字」';
-  msg('inMsg',ex?'warn':'ok',m);
+  if(!hit&&!ex) m='已解析，但报文里没有可识别的字段（可能是空对象 {}）——请确认粘贴的内容。';
+  msg('inMsg',ex?'warn':(hit?'ok':'warn'),m);
 }
 function msg(id,cls,t){const e=$(id);e.className='msg '+cls;e.textContent=t}
 
@@ -1963,7 +2086,7 @@ function setSeg(){
   document.querySelectorAll('#segFmt button').forEach(b=>
     b.classList.toggle('on',b.dataset.f===S.fmt));
   $('optNum').checked=S.num;$('optNull').checked=S.nul;$('optWrap').checked=S.useWrap;
-  $('wrapLab').style.display=S.wrap?'flex':'none';
+  $('wrapLab').style.display=(S.wrap||(S.outer&&S.outer.length))?'flex':'none';
 }
 function filter(){
   const q=$('q').value.trim().toLowerCase();
@@ -1978,7 +2101,11 @@ document.addEventListener('input',e=>{
     sync();return}
   if(t.classList.contains('av')){S.arr[t.dataset.a].rows[+t.dataset.i][t.dataset.k]=t.value;
     sync();return}
-  if(t.classList.contains('exv')){S.ex[+t.dataset.i].v=t.value;sync();return}
+  if(t.classList.contains('exv')){
+    const e=S.ex[+t.dataset.i];
+    e.v=t.value;
+    if(e.raw!==undefined) e.edited=true;   // 结构化值被改过 → 导出时按当前文本解析
+    sync();return}
   if(t.id==='q'){filter();return}
 });
 document.addEventListener('change',e=>{
