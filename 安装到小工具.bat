@@ -1,56 +1,78 @@
 @echo off
-chcp 65001 >nul
-setlocal enabledelayedexpansion
-set SRC=%~dp0报文解析生成工具V1.7.html
+rem ע�⣺���ļ����뱣��Ϊ ANSI / GBK ���� + CRLF ���С�
+rem ���� UTF-8 ���棬cmd �ᰴ GBK �������룬�б��жϺ�ֱ�����ˡ�
+setlocal
+title ��װ���Ľ������ߵ�С����Ŀ¼
+set "BAD=0"
+
+set "SRC=%~dp0���Ľ������ɹ���V1.7.html"
+set "CIIS=D:\�ӿڹ���\CIIS-Tester\jetty-runner"
+set "RMSCI=D:\�ӿڹ���\jetty-runner\jetty-runner"
 
 echo ============================================================
-echo  把「报文解析生成工具」安装到两个小工具的 webapps 目录
-echo  安装后就能用 http://127.0.0.1:9988/msgparse/ 打开，
-echo  与 /tester/api 同源，发报文才能读到返回。
+echo  �ѡ����Ľ������ɹ��ߡ�װ�������ӿ�С����
+echo  װ���� http://127.0.0.1:9988/msgparse/ �򿪣����ܶ�������
 echo ============================================================
 echo.
 
-if not exist "%SRC%" (
-  echo [错误] 找不到 "%SRC%"
-  echo        请把本 bat 和「报文解析生成工具V1.7.html」放在同一个文件夹里。
-  echo.
-  pause
-  exit /b 1
+if not exist "%SRC%" goto :nosrc
+
+echo Դ�ļ���%SRC%
+echo.
+
+call :install "%CIIS%" CIIS
+if errorlevel 1 set /a BAD+=1
+call :install "%RMSCI%" RMSCI
+if errorlevel 1 set /a BAD+=1
+
+echo.
+if "%BAD%"=="0" (
+  echo ------------------------------------------------------------
+  echo  ��װ��ɣ�����Ŀ¼���Ѹ��¡�
+) else (
+  echo ------------------------------------------------------------
+  echo  �� %BAD% ��Ŀ¼ûװ�ɹ���ԭ�������� [ʧ��] / [����] �С�
 )
-
-call :inst "D:\接口工具\CIIS-Tester\jetty-runner" "CIIS"
-call :inst "D:\接口工具\jetty-runner\jetty-runner" "RMSCI"
-
 echo.
-echo ------------------------------------------------------------
-echo 安装完成。之后的使用步骤：
-echo   1) 双击 9988.bat 启动小工具（CIIS 或 RMSCI，二选一）
-echo   2) 浏览器打开  http://127.0.0.1:9988/msgparse/
-echo   3) 在「字段报文」页填好报文，点「发送到接口 -^>」；
-echo      或直接在「接口调用」页点「^<- 取当前报文」
+echo  ʹ�ò��裺
+echo    1) ˫�� 9988.bat ����С���ߣ�CIIS �� RMSCI����ռ 9988��
+echo    2) ������� http://127.0.0.1:9988/msgparse/
+echo    3) �ֶα���ҳ��ñ��ģ��㡸���͵��ӿڡ����򵽽ӿ�ҳ�㡸ȡ��ǰ���ġ�
 echo.
-echo 注意：浏览器按站点隔离存储。以前双击 html（file://）时的协议库
-echo       不会自动带过来，第一次请用顶栏「恢复」读入备份 json，
-echo       或用「导入协议」把导出的 json 导进来。
+echo  ע�⣺�������վ�����洢����ǰ˫�� html ʱ��Э��ⲻ���Զ�
+echo        ����������һ�����ö������ָ������뱸�� json��
 echo ------------------------------------------------------------
 echo.
 pause
 exit /b 0
 
-:inst
-if not exist "%~1" (
-  echo [跳过] 找不到目录  %~1
-  goto :eof
+:nosrc
+echo [����] �Ҳ���Դ�ļ���
+echo        %SRC%
+echo.
+echo        ��ѱ� bat �͡����Ľ������ɹ���V1.7.html������ͬһ���ļ��С�
+echo.
+pause
+exit /b 1
+
+:install
+set "ROOT=%~1"
+set "NAME=%~2"
+set "DEST=%ROOT%\webapps\msgparse"
+if not exist "%ROOT%" (
+  echo [����] %NAME%���Ҳ���Ŀ¼ %ROOT%
+  exit /b 1
 )
-if not exist "%~1\webapps" (
-  echo [跳过] %~1 下没有 webapps 目录，可能不是 jetty 目录
-  goto :eof
+if not exist "%ROOT%\webapps" (
+  echo [����] %NAME%��%ROOT% ��û�� webapps�����ܲ��� jetty Ŀ¼
+  exit /b 1
 )
-if not exist "%~1\webapps\msgparse" mkdir "%~1\webapps\msgparse"
-copy /Y "%SRC%" "%~1\webapps\msgparse\index.html" >nul 2>&1
+if not exist "%DEST%" mkdir "%DEST%"
+copy /Y "%SRC%" "%DEST%\index.html" >nul 2>&1
 if errorlevel 1 (
-  echo [失败] %~2 复制失败：多半是 9988.bat 还在运行，先关掉那个黑窗口再试
-) else (
-  echo [OK]   %~2  -^>  %~1\webapps\msgparse\index.html
+  echo [ʧ��] %NAME%�����Ʊ��ܾ�������� 9988.bat ������
+  echo        �ȹص��Ǹ��ڴ��ڣ���˫���� bat
+  exit /b 1
 )
-goto :eof
+echo [OK]   %NAME%  -^>  %DEST%\index.html
+exit /b 0
