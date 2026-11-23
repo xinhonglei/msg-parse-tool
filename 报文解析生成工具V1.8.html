@@ -391,7 +391,7 @@ ul.issues li.w{color:var(--warn)}
     <div class="card">
       <div class="hd"><span class="t">② 导出报文</span>
         <span class="spacer"></span>
-        <button class="sm" id="btnToApi" title="把当前报文带到「接口调用」页当参数，直接发出去">发送到接口 →</button>
+        <button class="sm" id="btnToApi" title="把当前报文带到「接口调用」页当参数，直接发出去。带入的形态跟随上面的导出格式：选了 Key=Value 就带逐行 key=value 文本，否则带 JSON">发送到接口 →</button>
         <button class="sm pri" id="btnCopy">复制</button>
         <button class="sm" id="btnDl">下载</button>
       </div>
@@ -478,7 +478,7 @@ ul.issues li.w{color:var(--warn)}
         <span class="t">② 请求</span>
         <span class="d">参数就是报文本身</span>
         <span class="spacer"></span>
-        <button class="sm pri" id="btnApiTake" title="把「字段报文」页当前填好的报文取过来当参数">← 取当前报文</button>
+        <button class="sm pri" id="btnApiTake" title="把「字段报文」页当前填好的报文取过来当参数，形态跟随当前导出格式（Key=Value 则逐行 key=value）">← 取当前报文</button>
         <button class="sm" id="btnApiWrap" title="包成 serviceName=… / data={…} / withEnv=false 三行，用于通用方法">包成 CCI 三段式</button>
       </div>
       <div class="bd pad">
@@ -732,8 +732,14 @@ let SCALARS=[], MAP={}, TOPKEYS=[], ARRS={};
 const LS='rms_repo_msg_tool_v1';          // V1.2 旧 key，仅作迁移来源
 const LS_MODEL='rms_repo_msg_model_v1';   // V1.2 旧 key，仅作迁移来源
 const LS_PROTO='rms_repo_msg_protocols_v2';
-const TOOL_VERSION='1.8.0';
+const TOOL_VERSION='1.8.1';
 const CHANGELOG=[
+ {v:'1.8.1', d:'2026-11-23', items:[
+   '修复「导出选了 Key=Value，但点发送到接口后参数还是 JSON」：原来预览（renderOut）会按格式分派、而带参数（apiTake）写死 JSON.stringify，两套逻辑各管各的。现在统一走 payloadText()，预览什么就发什么',
+   '「发送到接口 →」与接口页「← 取当前报文」都跟随当前导出格式：Key=Value 带过去的是逐行 key=value 文本，格式化 / 单行 带过去的仍是 JSON',
+   '状态条显示带入的格式与行数（如「Key=Value · 4 行 · 111 字符」），一眼确认带对了',
+   'Key=Value 模式下若某个值里含换行，导出与发送时压成空格并提示，避免把「每行一个 key=value」的行结构撑断导致服务端解析串行'
+ ]},
  {v:'1.8.0', d:'2026-11-23', items:[
    '修复「一发送就断线」：/connect 返回 status:true 只代表客户端对象建好、认证通过，真正的 TCP 连接由后台 ConnectionWatchDog 异步建立，立刻 /send 会拿到「rmsci_web连接已经断线」。现在连接成功后会等连接就绪再发',
    '同环境 3 分钟内连过就直接发，不再重复 connect —— 原来每次发送都重连，等于把刚建好的连接拆掉重建，所以必然撞上空窗期',
@@ -1151,14 +1157,28 @@ function buildPayload(){
 }
 function setPath(o,path,val){let c=o;for(let i=0;i<path.length-1;i++)c=c[path[i]];
   c[path[path.length-1]]=val}
-function renderOut(){
-  const p=buildPayload();
+/* 当前报文的文本形态 —— 预览（outTxt）与「发送到接口」（apiParams）共用这一个出口。
+   以前 renderOut 与 apiTake 各写一套，导致「导出选 Key=Value，发出去却是 JSON」。
+   返回 {text,fmt,lines,squashed}：kv 才有 lines，squashed 是被压平的字段数。 */
+function payloadText(p){
+  /* 用 ===undefined 而不是 !p：payload 本身可能是空字符串（整段字符串化外壳），
+     !p 会把它当成「没传」再算一遍 */
+  if(p===undefined) p=buildPayload();
   if(S.fmt==='kv'){
     const lines=[]; flattenKV(p,'',lines);
-    $('outTxt').textContent=lines.join('\n');
-  }else{
-    $('outTxt').textContent=S.fmt==='pretty'?JSON.stringify(p,null,2):JSON.stringify(p);
+    let squashed=0;
+    /* 值里带换行会把「每行一个 key=value」的结构撑断，服务端按行切就串了 ⇒ 压成空格并计数 */
+    const out=lines.map(function(l){
+      if(/[\r\n]/.test(l)){ squashed++; return l.replace(/[\r\n]+/g,' ') }
+      return l;
+    });
+    return {text:out.join('\n'), fmt:'kv', lines:out.length, squashed:squashed};
   }
+  if(S.fmt==='min') return {text:JSON.stringify(p), fmt:'min', lines:1, squashed:0};
+  return {text:JSON.stringify(p,null,2), fmt:'pretty', lines:0, squashed:0};
+}
+function renderOut(){
+  $('outTxt').textContent=payloadText().text;
 }
 function flattenKV(o,prefix,out){
   if(o==null) return;
@@ -2350,13 +2370,19 @@ function updateApiParamChip(){
   $('apiParamChip').textContent=n+' 字符';
 }
 function apiTake(){
-  let p;
+  let p,r;
   try{ p=buildPayload() }
   catch(e){ return apiStat('bad','取当前报文失败：'+esc(e.message)) }
-  $('apiParams').value=JSON.stringify(p,null,2);
+  r=payloadText(p);
+  $('apiParams').value=r.text;
   updateApiParamChip();
-  apiStat('ok','已把「字段报文」页当前报文带入参数（'+$('apiParams').value.length+
-    ' 字符）。参数可以随便改，改完点「发送报文」。');
+  const name=r.fmt==='kv'?'Key=Value':(r.fmt==='min'?'单行 JSON':'JSON');
+  const detail=(r.fmt==='kv'?r.lines+' 行 · ':'')+r.text.length+' 字符';
+  /* 状态条是 flex 容器，别用 <br> 换行（会被当成匿名 flex item），直接接在句子里 */
+  apiStat(r.squashed?'warn':'ok',
+    '已把「字段报文」页当前报文带入参数（'+name+' · '+detail+'）。'+
+    (r.squashed?'有 '+r.squashed+' 个值里含换行，已压成空格（否则会把 Key=Value 的一行一项撑断）。':'')+
+    '参数可以随便改，改完点「发送报文」。');
 }
 function apiWrapCci(){
   const cur=$('apiParams').value.trim();
