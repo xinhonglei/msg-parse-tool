@@ -210,6 +210,9 @@ ul.issues li.w{color:var(--warn)}
 .mbox .mb .nm span{font-size:12px;color:var(--txt3);white-space:nowrap}
 .mbox .mf{padding:11px 18px;border-top:1px solid var(--line2);display:flex;justify-content:flex-end;
  gap:8px;background:#fafbfc}
+/* ===== V1.7.1 通用确认框 ===== */
+#cfBody code{background:#f2f4f7;border-radius:3px;padding:0 4px;font-family:Consolas,monospace;font-size:12px}
+#cfBody .warn{display:block;margin-top:9px;color:#b45309;font-weight:600}
 /* ===== V1.6.0 补充字段名称弹窗 ===== */
 .mbox.namebox{width:860px}
 .namebox .mb{padding:12px 18px}
@@ -491,6 +494,8 @@ ul.issues li.w{color:var(--warn)}
         <div class="fld" style="margin-top:10px"><label>参数（params）</label>
           <textarea id="apiParams" rows="14" placeholder='{"tradeInfo":{...}}'></textarea>
         </div>
+        <div class="apinote" style="margin:0 0 8px">有些查询 / 删除类接口不需要报文参数：参数框留空也能发，点「发送报文」会先弹一次确认，
+          发出的就是 <code>"params": ""</code>。</div>
         <div class="apibar2">
           <span class="chip" id="apiParamChip">0 字符</span>
           <span class="spacer"></span>
@@ -641,6 +646,18 @@ dealer=外部接口本方交易员
   </div>
 </div>
 
+<!-- ================= V1.7.1 通用确认框（空参发送前用） ================= -->
+<div class="mask" id="cfMask">
+  <div class="mbox" style="width:540px">
+    <div class="mt" id="cfTitle">确认</div>
+    <div class="mb" id="cfBody"></div>
+    <div class="mf">
+      <button class="sm" data-cf="no">取消</button>
+      <button class="sm pri" data-cf="yes" id="cfYes">确定</button>
+    </div>
+  </div>
+</div>
+
 <script>
 /* ========================= 内置默认字段定义（来自《请求信息.docx》，可被导入的 docx 覆盖） ========================= */
 const TOP = [
@@ -710,8 +727,14 @@ let SCALARS=[], MAP={}, TOPKEYS=[], ARRS={};
 const LS='rms_repo_msg_tool_v1';          // V1.2 旧 key，仅作迁移来源
 const LS_MODEL='rms_repo_msg_model_v1';   // V1.2 旧 key，仅作迁移来源
 const LS_PROTO='rms_repo_msg_protocols_v2';
-const TOOL_VERSION='1.7.0';
+const TOOL_VERSION='1.7.1';
 const CHANGELOG=[
+ {v:'1.7.1', d:'2026-11-23', items:[
+   '参数框允许留空：有些接口本来就不传参数，现在发出的就是 "params": ""（原来在本地就被拦掉，请求根本发不出去）',
+   '空参发送前弹一次用法自带的确认框（不是浏览器 confirm）：写明会发空字符串、要发报文请先「← 取当前报文」，并对 save / delete 这类写接口给出提醒；Enter 确认、ESC 取消',
+   '状态条在空参发送时标注「空参 ·」，成功后也保留，避免被误当成漏填了参数',
+   '「包成 CCI 三段式」遇到空参改为提示「空参没法包三段式，直接发送即可」'
+ ]},
  {v:'1.7.0', d:'2026-11-23', items:[
    '新增「接口调用」页：改完报文直接作为 params 发给本机 CIIS / RMSCI 小工具，返回就地展示',
    '环境可多套保存（名称 / 服务地址 / 端口 / 用户 / 密码 / 接口类型 / 压缩传输），下拉一键切换，密码做 b64 混淆',
@@ -2051,23 +2074,72 @@ function apiReject(text){
   }
   apiRaw=''; apiPretty='';
 }
-async function apiSend(){
+/* ---- V1.7.1：通用确认框（空参发送前用），不用浏览器原生 confirm ---- */
+let cfCb=null;
+function confirmBox(o){
+  cfCb=(o&&o.onOk)||null;
+  $('cfTitle').textContent=(o&&o.title)||'确认';
+  $('cfBody').innerHTML=(o&&o.html)||'';
+  $('cfYes').textContent=(o&&o.ok)||'确定';
+  $('cfMask').classList.add('open');
+  const b=$('cfYes'); if(b) b.focus();
+}
+function closeConfirm(){
+  const m=$('cfMask'); if(m) m.classList.remove('open');
+  cfCb=null;
+}
+function runConfirm(){
+  const f=cfCb;
+  closeConfirm();
+  if(f) f();
+}
+/* 读一次请求参数：确认框前后各读一次，弹窗期间遮罩挡住页面，值不会漂 */
+function apiReq(){
+  return {
+    ip:$('envIp').value.trim(), port:$('envPort').value.trim(),
+    user:$('envUser').value.trim(), pass:$('envPass').value,
+    svc:($('apiServiceOther').value||'').trim()||$('apiService').value,
+    mth:($('apiMethodOther').value||'').trim()||$('apiMethod').value,
+    params:$('apiParams').value
+  };
+}
+function apiSend(){
   if(!SAME_ORIGIN){
     apiReject('当前是本地文件打开，浏览器会拦掉返回。请用 http://127.0.0.1:9988/msgparse/ 打开（先跑 9988.bat）。');
     return;
   }
+  const r=apiReq();
+  if(!r.ip||!r.port) return apiReject('请先填服务地址与服务端口。');
+  if(!r.user) return apiReject('请先填登录用户。');
+  if(!r.pass) return apiReject('请先填登录密码。');
+  if(!r.svc) return apiReject('请选择或手填服务。');
+  if(!r.mth) return apiReject('请选择或手填方法。');
+  /* V1.7.1：参数可以为空 —— 有些接口本来就不传参数，发出的就是 "params": ""。
+     空参不再本地拦掉，但发之前确认一次，防止本想发报文却手滑点了发送。 */
+  if(!r.params.trim()){
+    confirmBox({
+      title:'参数为空，确认发送？',
+      html:'这次会发出 <code>"params": ""</code>（空字符串，不是 <code>{}</code>）。<br>'+
+           '如果要发报文，请先到「字段报文」页填好，再点 <b>← 取当前报文</b> 带过来。<br>'+
+           '<span class="warn">方法若是 save / delete 这类会写数据的接口，请先确认这是你要的结果。</span>',
+      ok:'确认发送空参',
+      onOk:sendNow
+    });
+    return;
+  }
+  sendNow();
+}
+async function sendNow(){
   const ip=$('envIp').value.trim(), port=$('envPort').value.trim();
   const user=$('envUser').value.trim(), pass=$('envPass').value;
   const svc=($('apiServiceOther').value||'').trim()||$('apiService').value;
   const mth=($('apiMethodOther').value||'').trim()||$('apiMethod').value;
-  const params=$('apiParams').value;
-  if(!ip||!port) return apiReject('请先填服务地址与服务端口。');
-  if(!user) return apiReject('请先填登录用户。');
-  if(!pass) return apiReject('请先填登录密码。');
-  if(!svc) return apiReject('请选择或手填服务。');
-  if(!mth) return apiReject('请选择或手填方法。');
-  if(!params.trim())
-    return apiReject('参数为空：先到「字段报文」页填好，点「← 取当前报文」把报文带过来。');
+  const rawParams=$('apiParams').value;
+  /* 代码评审修正：只有空白字符也按空参处理，真发空字符串 —— 确认框上写的是会发 ""，
+     不能把几个空格当成「参数」塞给后端。 */
+  const empty=!rawParams.trim();
+  const params=empty?'':rawParams;
+  const emptyTag=empty?'空参 · ':'';
   const body={ip:ip,port:port,userName:user,password:pass,service:svc,method:mth,params:params};
   /* 服务端的 CCIClient 是会话级的：没连过、或上次连接失败被关掉时，直接 /send 只会返回
      「CCIClient 已经被关闭」这种没法排查的错误。所以这里先自动 connect 一次，
@@ -2087,17 +2159,17 @@ async function apiSend(){
       setApiRes(JSON.stringify(cj,null,2),'json');
       return;
     }
-    apiStat('','连接成功，正在发送 … '+esc(svc)+' / '+esc(mth));
+    apiStat('',emptyTag+'连接成功，正在发送 … '+esc(svc)+' / '+esc(mth));
     box.className='apires empty';
     box.textContent='等待返回 …（最长 10 分钟）';
     const j=await apiPost('/send',body);
     const ms=Math.round(performance.now()-t0);
     const m=j&&j.msg!=null?String(j.msg):'';
     if(j&&j.status===true){
-      apiStat('ok','成功 · '+ms+'ms · 返回 '+m.length+' 字符 · '+esc(svc)+' / '+esc(mth));
+      apiStat('ok',emptyTag+'成功 · '+ms+'ms · 返回 '+m.length+' 字符 · '+esc(svc)+' / '+esc(mth));
       setApiRes(m,'json');
     }else{
-      apiStat('bad','失败 · '+ms+'ms · '+esc(apiErrText(j)));
+      apiStat('bad',emptyTag+'失败 · '+ms+'ms · '+esc(apiErrText(j)));
       setApiRes(JSON.stringify(j,null,2),'json');
     }
   }catch(err){
@@ -2122,7 +2194,7 @@ function apiTake(){
 }
 function apiWrapCci(){
   const cur=$('apiParams').value.trim();
-  if(!cur) return apiStat('bad','参数为空：先点「← 取当前报文」或直接粘贴报文。');
+  if(!cur) return apiStat('bad','参数为空：空参没法包成三段式。若就是要发空参，直接点「发送报文」（会先确认一次）。');
   if(/^serviceName\s*[=:]/i.test(cur))
     return apiStat('warn','参数看起来已经是三段式（以 serviceName= 开头），没有重复包装。');
   let data=cur;
@@ -3224,6 +3296,7 @@ document.addEventListener('change',e=>{
 });
 document.addEventListener('click',e=>{
   const t=e.target.closest('button');if(!t)return;
+  if(t.dataset.cf){ if(t.dataset.cf==='yes') runConfirm(); else closeConfirm(); return }
   if(t.dataset.imp){
     if(t.dataset.imp==='cancel'){closeImpModal();return}
     const m=pendingModel; if(!m){closeImpModal();return}
@@ -3372,6 +3445,12 @@ document.addEventListener('keydown',e=>{
   const modalOpen=$('impMask').classList.contains('open');
   const rstOpen=$('rstMask').classList.contains('open');
   const nmOpen=$('nmMask').classList.contains('open');
+  const cfOpen=$('cfMask').classList.contains('open');
+  if(cfOpen){
+    if(e.key==='Escape'){closeConfirm();e.preventDefault();return}
+    if(e.key==='Enter'){runConfirm();e.preventDefault();return}
+    return;   /* 确认框打开时不响应其它快捷键，避免 Ctrl+S 之类抢事件 */
+  }
   if(e.key==='Escape'&&rstOpen){closeRstModal();e.preventDefault();return}
   if(e.key==='Escape'&&nmOpen){closeNmModal();e.preventDefault();return}
   if(e.key==='Escape'&&modalOpen){closeImpModal();e.preventDefault();return}
@@ -3609,6 +3688,9 @@ $('impMask').addEventListener('click',function(e){
 });
 $('nmMask').addEventListener('click',function(e){
   if(e.target.id==='nmMask')closeNmModal();
+});
+$('cfMask').addEventListener('click',function(e){
+  if(e.target.id==='cfMask')closeConfirm();
 });
 
 /* ========================= 启动（所有事件绑定已就绪） ========================= */
