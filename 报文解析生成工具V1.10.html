@@ -314,6 +314,19 @@ select:disabled{background:#f3f4f6;color:var(--txt3);cursor:not-allowed}
 .chg .vit{color:var(--txt2);flex:1}
 .chg .vit i{font-style:normal;display:block;padding:1px 0}
 .chg .vit i::before{content:'· ';color:var(--txt3)}
+/* V1.13.1：日志默认收起，点标题展开（展开状态记在本机浏览器） */
+.chg .hd.chghd{cursor:pointer;user-select:none}
+.chg .hd.chghd:hover{background:#fafbfc}
+.chg .caret{color:var(--txt3);font-size:10px;display:inline-block;transform:rotate(0deg);
+ transition:transform .16s ease}
+.chg.open .caret{transform:rotate(90deg)}
+.chg .cta{margin-left:auto;font-size:12px;color:var(--pri);white-space:nowrap}
+.chg .cta:hover{text-decoration:underline}
+#chgBody{display:none}
+.chg.open #chgBody{display:block;max-height:min(58vh,480px);overflow:auto}
+.chg .chgtip{font-size:12px;color:var(--txt3);line-height:1.65;padding:0 0 9px;
+ border-bottom:1px dashed var(--line2);margin-bottom:2px}
+.chg .chgtip code{background:#f2f4f7;border-radius:3px;padding:0 4px;font-family:Consolas,monospace}
 
 </style>
 </head>
@@ -632,9 +645,12 @@ select:disabled{background:#f3f4f6;color:var(--txt3);cursor:not-allowed}
 <!-- ================= 版本变更日志 ================= -->
 <div class="chg" id="chgCard">
   <div class="card">
-    <div class="hd"><span class="t">版本变更日志</span>
-      <span class="badge g" id="chgVer">V1.5.0</span>
-      <span class="d">协议与填写值存本机浏览器（localStorage）；另有磁盘备份可写入真实 json 文件，换电脑把它一起拷走即可恢复</span>
+    <div class="hd chghd" id="chgHead" role="button" tabindex="0" title="点击展开 / 收起版本变更日志">
+      <span class="caret">▶</span>
+      <span class="t">版本变更日志</span>
+      <span class="badge g" id="chgVer">V1.13.0</span>
+      <span class="d" id="chgSum">共 19 个版本</span>
+      <span class="cta" id="chgCta">展开</span>
     </div>
     <div class="bd pad" id="chgBody"></div>
   </div>
@@ -806,8 +822,12 @@ let SCALARS=[], MAP={}, TOPKEYS=[], ARRS={};
 const LS='rms_repo_msg_tool_v1';          // V1.2 旧 key，仅作迁移来源
 const LS_MODEL='rms_repo_msg_model_v1';   // V1.2 旧 key，仅作迁移来源
 const LS_PROTO='rms_repo_msg_protocols_v2';
-const TOOL_VERSION='1.13.0';
+const TOOL_VERSION='1.13.1';
 const CHANGELOG=[
+ {v:'1.13.1', d:'2026-11-24', items:[
+   '版本变更日志默认收起：页面底部只留一行标题 + 当前版本号 + 「共 N 个版本」，点标题（或按回车 / 空格）展开，展开后内容区限高可滚动，不再把页面撑得很长',
+   '展开 / 收起状态记在本机浏览器，下次打开保持上次的选择；协议与填写值的存放说明挪到日志展开后的第一行，不再占着标题栏',
+ ]},
  {v:'1.13.0', d:'2026-11-24', items:[
    '修「校准完名称列全空」：报文只能说明「有哪些键、什么值」，说不清字段叫什么、是否必填、备注写什么；现在同名字段的名称 / 必填 / 备注 / Java 类型 / 布尔口径都从旧协议搬回来，只有结构跟着报文走',
    '修三段式粘贴：整段 serviceName= / data= / withEnv= 贴进报文框时，以前按 Key=Value 解析，这三行本身变成 3 个「额外字段」；现在先拆包只取 data 那一段，接口名与 withEnv 顺手回填到发送区（接口名框已有别的值就不覆盖）',
@@ -4580,15 +4600,35 @@ async function bkInit(){
   else bkSetStatus('warn','自动备份待授权（点「备份」）');
 }
 
+/* V1.13.1：变更日志可折叠 —— 默认收起，点标题展开；展开状态记在本机，下次打开保持不变 */
+const LS_CHG_OPEN='rms_repo_msg_chg_open';
+function chgOpen(on){
+  const c=$('chgCard'); if(!c) return;
+  c.classList.toggle('open',!!on);
+  const t=$('chgCta'); if(t) t.textContent=on?'收起':'展开';
+  const s=$('chgSum');
+  if(s) s.textContent='共 '+CHANGELOG.length+' 个版本 · '+(on?'点击收起':'点击展开');
+  const b=$('chgBody'); if(b&&on) b.scrollTop=0;
+  try{ localStorage.setItem(LS_CHG_OPEN,on?'1':'0') }catch(e){}
+}
+function toggleChg(){
+  const c=$('chgCard'); if(!c) return;
+  chgOpen(!c.classList.contains('open'));
+}
 function renderChangelog(){
   const vb=$('verBadge'), cv=$('chgVer'), cb=$('chgBody');
   if(vb) vb.textContent='V'+TOOL_VERSION;
   if(cv) cv.textContent='V'+TOOL_VERSION;
   if(!cb) return;
-  cb.innerHTML=CHANGELOG.map(c=>
+  cb.innerHTML='<div class="chgtip">协议与填写值存在本机浏览器（<code>localStorage</code>）；'+
+    '另有磁盘备份可写入真实 json 文件，换电脑把它一起拷走即可恢复。</div>'+
+    CHANGELOG.map(c=>
     '<div class="vrow"><div class="vno">V'+esc(c.v)+'</div>'+
     '<div class="vdt">'+esc(c.d)+'</div>'+
     '<div class="vit">'+c.items.map(i=>'<i>'+esc(i)+'</i>').join('')+'</div></div>').join('');
+  let on=false;
+  try{ on=localStorage.getItem(LS_CHG_OPEN)==='1' }catch(e){}
+  chgOpen(on);
 }
 function syncHeaderH(){
   const hd=document.querySelector('header'); if(!hd) return;
@@ -4882,6 +4922,13 @@ function copyOut(){
     document.body.removeChild(ta)}
 }
 $('inTxt').addEventListener('paste',()=>setTimeout(()=>doImport($('inTxt').value),0));
+/* V1.13.1：变更日志标题点击 / 回车 / 空格展开收起 */
+if($('chgHead')){
+  $('chgHead').addEventListener('click',e=>{ e.preventDefault(); toggleChg() });
+  $('chgHead').addEventListener('keydown',e=>{
+    if(e.key==='Enter'||e.key===' '){ e.preventDefault(); toggleChg() }
+  });
+}
 /* V1.13.0：参数框里贴整段三段式 → 自动拆成「接口名 / data / withEnv」三处，
    否则三行会整段当成 data 再拼一次，服务端 data 里套 serviceName 必报参数异常 */
 $('apiParams').addEventListener('paste',()=>setTimeout(()=>{
