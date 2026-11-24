@@ -479,6 +479,10 @@ select:disabled{background:#f3f4f6;color:var(--txt3);cursor:not-allowed}
           <div class="fld"><label>登录用户</label><input type="text" id="envUser" placeholder="登录用户"></div>
           <div class="fld"><label>登录密码</label><input type="password" id="envPass" placeholder="登录密码"></div>
         </div>
+        <div class="fld" id="envDataHeadBox" style="margin-top:10px;display:none">
+          <label>data 首元素（外层数组第 0 项，留空＝不套）</label>
+          <input type="text" id="envDataHead" placeholder="例如 D.762 —— 导出的 data 会变成 [&quot;D.762&quot;, {…}]">
+        </div>
         <div class="apibar2">
           <div class="fld grow" style="max-width:360px"><label>接口类型（决定服务与方法下拉）</label>
             <select id="envKind">
@@ -791,8 +795,17 @@ let SCALARS=[], MAP={}, TOPKEYS=[], ARRS={};
 const LS='rms_repo_msg_tool_v1';          // V1.2 旧 key，仅作迁移来源
 const LS_MODEL='rms_repo_msg_model_v1';   // V1.2 旧 key，仅作迁移来源
 const LS_PROTO='rms_repo_msg_protocols_v2';
-const TOOL_VERSION='1.10.2';
+const TOOL_VERSION='1.11.0';
 const CHANGELOG=[
+ {v:'1.11.0', d:'2026-11-24', items:[
+   '按文档的二级标题切接口：一份需求文档里有几个接口就建几份协议，不再靠表标题去猜边界（2.2 / 2.3 不会再被并成一组，协议名直接取章节标题）',
+   '新增「元数据表」识别：表里写着「通用接口 / 功能方法」的那种两列表，不再被当成字段建出两个假字段；「功能方法」那串自动填进接口名（serviceName），withEnv 默认「否」',
+   '字段层级改成树：按 JSONObject / List<XxxBO> / XxxVO 的引用关系把子表挂到父节点（tradeInfo → exchangeBondList[] → 元素字段），不再是「一个主对象 + 一堆根级数组」',
+   '自动排除响应表与规则表：表头是「数据库类型」的返回信息表、没有类型列的校验规则表、修订记录都不会再被当成请求字段',
+   '新增 data 外壳：报文外面套一层 [首元素, 报文]，首元素存在环境里（默认 D.762），换环境改一处即可，留空则不套',
+   '按实测报文校准字段名：文档写 exchangeBondDataList / transdate / securityCode，报文是 exchangeBondList / transDate / securityId，导入时自动改用报文写法；isCoupon 从数组元素移到 tradeInfo 层；补 tradeInfo.eventCategory = REPO_EXCHANGE；文档有报文没有的 sessionId / approvalValidDate 仍建出来但默认不勾',
+   '必填字段默认勾选，建完协议即可直接发送',
+ ]},
  {v:'1.10.2', d:'2026-11-24', items:[
    '修参数被多转义一层：参数框里带反斜杠的 JSON（从日志 / 截图复制的 [\\"D.762\\",{…}]）以前解析失败就原样发，HTTP body 再转义一层，服务端 data 里仍剩 \\"，业务层 JSON.parse 报参数异常；现在发送前自动逐层去转义并压成单行',
    '预览里会写明「已自动去掉 n 层反斜杠转义」并摊开实际发出的内容，不悄悄改用户输入',
@@ -942,11 +955,16 @@ function isTree(){ return !!(MODEL&&MODEL.tree) }
 /* ========================= 状态 ========================= */
 let S = null;
 function blank(){
-  const st={v:{},ck:{},arr:{},ex:[],mode:'flat',fmt:'pretty',num:false,nul:false,
-            wrap:null,useWrap:false,outer:[],ty:{}};
-  SCALARS.forEach(f=>{st.v[f.k]='';st.ck[f.k]=false});
-  for(const a in ARRS) st.arr[a]={on:false,cols:{},rows:[mkRow(a)]},
+  const st={v:{},ck:{},arr:{},ex:[],mode:'flat',fmt:'pretty',num:!!(MODEL&&MODEL.numHint),nul:false,
+            wrap:null,useWrap:false,outer:[],ty:{},
+            shellOn:!!(MODEL&&MODEL.shell)};
+  /* V1.11.0：字段可带默认值（v0）与默认勾选（ckd）；文档有、报文没有的字段标了 off，默认不勾 */
+  SCALARS.forEach(f=>{st.v[f.k]=(f.v0!=null?String(f.v0):'');st.ck[f.k]=!!(f.ckd&&!f.off)});
+  for(const a in ARRS){
+    const def=(MODEL&&Array.isArray(MODEL.arrays))?MODEL.arrays.find(x=>x&&x.key===a):null;
+    st.arr[a]={on:!!(def&&def.on),cols:{},rows:[mkRow(a)]},
     ARRS[a].fields.forEach(f=>st.arr[a].cols[f.k]=true);
+  }
   return st;
 }
 function mkRow(a){const o={};ARRS[a].fields.forEach(f=>o[f.k]='');return o}
@@ -982,6 +1000,8 @@ function normalizeState(o){
   b.mode=o.mode||'flat'; b.fmt=o.fmt||'pretty';
   b.num=!!o.num; b.nul=!!o.nul; b.wrap=o.wrap||null; b.useWrap=!!o.useWrap;
   b.outer=Array.isArray(o.outer)?o.outer.filter(x=>x&&(x.t==='str'||x.t==='arr')):[];
+  /* V1.11.0：data 外壳（[首元素, 报文]）的开关跟着协议走，老状态里没有这个键就用协议默认 */
+  b.shellOn=(o.shellOn===undefined)?!!(MODEL&&MODEL.shell):!!o.shellOn;
   b.ty=(o.ty&&typeof o.ty==='object')?o.ty:{};
   if(o.v&&typeof o.v==='object') for(const k in b.v) if(k in o.v) b.v[k]=o.v[k]==null?'':o.v[k];
   if(o.ck&&typeof o.ck==='object') for(const k in b.ck) if(k in o.ck) b.ck[k]=!!o.ck[k];
@@ -1125,7 +1145,16 @@ function renderExtra(){
     '<div>位置</div><div>操作</div></div>'+rows):
     '<div style="padding:10px 12px;color:var(--txt3)">无额外字段</div>';
 }
-function renderAll(){renderGroups();renderExtra();sync()}
+function renderAll(){renderGroups();renderExtra();syncShellUI();sync()}
+/* V1.11.0：环境栏里的「data 首元素」只在协议带外壳时显示；值跟着环境走，没配过就显示协议默认 */
+function syncShellUI(){
+  const box=$('envDataHeadBox'); if(!box) return;
+  const has=!!(MODEL&&MODEL.shell);
+  box.style.display=has?'':'none';
+  if(!has||!$('envDataHead')) return;
+  const e=activeEnv();
+  $('envDataHead').value=(e&&e.dataHead!=null)?String(e.dataHead):(MODEL.shell.pre||'');
+}
 
 /* ========================= 导出 ========================= */
 function emptyVal(){return S.nul?null:''}
@@ -1144,6 +1173,12 @@ function cv(f,k,raw){
     if(ty==='b'&&(s==='true'||s==='false')) return s==='true';
     if(ty==='n'&&/^-?\d+(\.\d+)?$/.test(s.trim())) return Number(s.trim());
     if(ty==='o'){ try{ return JSON.parse(s) }catch(_){ return raw } }  // 协议写标量、报文给对象时也保真
+  }
+  /* V1.11.0：文档里类型写 Boolean 的字段，按 true / false 发，别发成字符串 "true" */
+  if(f&&f.bool&&s!==''){
+    const b=String(s).trim().toLowerCase();
+    if(b==='true'||b==='1'||b==='是') return true;
+    if(b==='false'||b==='0'||b==='否') return false;
   }
   return coerce(f,raw);
 }
@@ -1235,7 +1270,19 @@ function buildPayload(){
     }
     if(S.outer&&S.outer.length) payload=rewrap(payload,S.outer);  // 逆序套回数组 / 字符串外壳
   }
+  /* V1.11.0：data 外壳 —— 报文外面再套一层数组，第 0 项是环境里配的常量（实测报文是 "D.762"）。
+     值跟着环境走：换环境改「data 首元素」即可，不用改协议。空串 = 不套。 */
+  if(MODEL.shell&&S.shellOn!==false){
+    const h=shellHead();
+    if(h!=='') payload=[h,payload];
+  }
   return payload;
+}
+/* 外壳首元素：环境里显式配了就用环境的（空串表示不套），没配过才退协议的默认值 */
+function shellHead(){
+  const e=activeEnv();
+  if(e&&e.dataHead!=null) return String(e.dataHead).trim();
+  return (MODEL&&MODEL.shell&&MODEL.shell.pre)?String(MODEL.shell.pre):'';
 }
 function setPath(o,path,val){let c=o;for(let i=0;i<path.length-1;i++)c=c[path[i]];
   c[path[path.length-1]]=val}
@@ -2061,7 +2108,9 @@ function envNormalizeOne(raw){
           user:String(raw.user||''), pass:String(raw.pass||''),
           zip:!!raw.zip,
           /* V1.9.0：老环境文件没有这两个字段，给空值 / false 即可 */
-          svcName:String(raw.svcName||''), withEnv:envWithEnvFlag(raw.withEnv)};
+          svcName:String(raw.svcName||''), withEnv:envWithEnvFlag(raw.withEnv),
+          /* V1.11.0：老环境文件没有 dataHead —— 不给这个键，导出时才能退回协议默认值 */
+          dataHead:(raw.dataHead!=null?String(raw.dataHead):undefined)};
 }
 /* 从任意 json 里捞出环境数组：环境文件 / 备份文件 / 裸数组 / 带 list 的对象都认。
    注意备份文件的环境在 o.envs.list 下面（V1.8.0 起才有）。 */
@@ -2134,6 +2183,7 @@ function renderEnvBar(){
   $('envPass').value=b64dec(e.pass);
   $('envZip').checked=!!e.zip;
   $('envKind').value=e.kind||'CIIS';
+  syncShellUI();
   /* V1.9.0：三段式的接口名 / withEnv 跟着环境走 */
   if($('apiSvcName')) $('apiSvcName').value=e.svcName||'';
   if($('apiWithEnv')) $('apiWithEnv').value=envWithEnvFlag(e.withEnv)?'1':'0';
@@ -3014,7 +3064,9 @@ function fieldFromRow(cells,m){
   const note=String((m.remark>=0?cells[m.remark]:'')||'').trim();
   const rule=String((m.rule>=0?cells[m.rule]:'')||'').trim();
   const db=(m.db>=0?cells[m.db]:'')||'';
-  const f={k:key,n:String(name).trim(),t:mt.t,r:r,note:note,rule:rule,db:db};
+  /* V1.11.0：留一份文档里写的原始类型 —— mapType 会把 Boolean 归成 String（老口径），
+     需要按真实类型导出的地方（isCoupon 这类）用它来判断 */
+  const f={k:key,n:String(name).trim(),t:mt.t,r:r,note:note,rule:rule,db:db,dt:String(typeRaw||'').trim()};
   if(/条件必传|至少传一个|至少.*一个/.test(rule+note)){r=1;f.cond='cond';}
   if(/yyyyMMdd|yyyy-MM-dd|日期/.test(note+rule)) f.fmt='date';
   else if(/HH24|HH[:：]\d|时间|时分|时刻|时分秒/.test(note+rule)) f.fmt='time';
@@ -3156,6 +3208,302 @@ function buildSpecFromTables(tables){
     arrays: arrays.filter(a=>a&&a.fields)  // 过滤掉无 fields 的畸形条目
   };
 }
+/* ================= V1.11.0：按标题切接口 + 树形协议 + 按实测报文校准 =================
+   真实接口文档（CMS 需求文档这类）长这样：
+     heading2  新增质押式回购换券事件上行接口
+       heading3 接口请求参数                 ← 表：cusNumber / jsonData(JSONObject)
+       heading4 jsonData                     ← 表：tradeInfo / requestInfo（data 根）
+       heading4 tradeInfo字段                ← 表：… exchangeBondDataList(List<BO>)
+       heading4 ExchangeBondToCiisBO字段      ← 表：数组元素字段
+       heading4 返回信息字段                  ← 表：响应，绝不能进请求
+   老逻辑靠「表标题像不像接口」猜边界、只认一个主对象 + 根级数组，这种文档必错
+   （2.2/2.3 会被并成一组，返回信息表、校验规则表会被当数组塞进请求）。
+   新逻辑：标题级别切接口 → 段内先抽「通用接口 / 功能方法」元数据表 → 再按
+   JSONObject / List<Xxx> / XxxVO 的引用关系把子表挂成父子节点 → 按实测报文校准字段名。 */
+
+/* docx 标题级别：styles.xml 里 w:style 的 name 是 heading N，或 pPr/outlineLvl。
+   outlineLvl ≥ 9 是正文，不算标题。返回 {styleId: 0-based level} */
+function docxStyleLevels(xml){
+  const out={};
+  if(!xml) return out;
+  let doc;
+  try{ doc=new DOMParser().parseFromString(xml,'application/xml') }catch(e){ return out }
+  const all=[...doc.getElementsByTagName('*')];
+  all.filter(e=>e.localName==='style').forEach(st=>{
+    const id=st.getAttribute('w:styleId')||st.getAttribute('styleId');
+    if(!id) return;
+    let lv=-1;
+    const nm=[...st.getElementsByTagName('*')].find(e=>e.localName==='name');
+    const nmv=nm?(nm.getAttribute('w:val')||nm.getAttribute('val')||''):'';
+    const m=/^heading\s*(\d+)$/i.exec(String(nmv).trim());
+    if(m) lv=+m[1]-1;
+    if(lv<0){
+      const ol=[...st.getElementsByTagName('*')].find(e=>e.localName==='outlineLvl');
+      const v=ol?(ol.getAttribute('w:val')||ol.getAttribute('val')):null;
+      if(v!=null&&v!==''&&+v<9) lv=+v;
+    }
+    if(lv>=0&&lv<6) out[id]=lv;
+  });
+  return out;
+}
+/* 带标题栈的表格抽取：每张表记下它前面最近的 h1~h4（供按标题切接口用） */
+function extractDocTables(xml, levels){
+  const doc=new DOMParser().parseFromString(xml,'application/xml');
+  let body=null;
+  for(const c of doc.documentElement.childNodes)
+    if(c.nodeType===1&&c.localName==='body'){body=c;break}
+  if(!body) throw new Error('文档结构异常（找不到 w:body）');
+  const lvlOfP=(p)=>{
+    let sid='', ol=null;
+    for(const kid of p.childNodes){
+      if(kid.nodeType!==1||kid.localName!=='pPr') continue;
+      for(const g of kid.childNodes){
+        if(g.nodeType!==1) continue;
+        if(g.localName==='pStyle') sid=g.getAttribute('w:val')||g.getAttribute('val')||'';
+        if(g.localName==='outlineLvl') ol=g.getAttribute('w:val')||g.getAttribute('val');
+      }
+    }
+    if(ol!=null&&ol!==''&&+ol<9) return +ol;
+    return (levels&&levels[sid]!=null)?levels[sid]:-1;
+  };
+  const tables=[], heads=['','','','','',''];
+  let cap='';
+  for(const ch of body.childNodes){
+    const ln=ch.localName;
+    if(ln==='p'){
+      const t=txtOf(ch).trim();
+      const lv=lvlOfP(ch);
+      if(lv>=0&&t){ heads[lv]=t; for(let i=lv+1;i<heads.length;i++) heads[i]='' }
+      if(t) cap=t;
+    } else if(ln==='tbl'){
+      const rows=[];
+      for(const tr of ch.childNodes){
+        if(tr.localName!=='tr') continue;
+        const cells=[];
+        for(const tc of tr.childNodes){
+          if(tc.localName!=='tc') continue;
+          cells.push(txtOf(tc).replace(/\n/g,' ').trim());
+        }
+        rows.push(cells);
+      }
+      tables.push({caption:cap, rows, heads:heads.slice()});
+    }
+  }
+  return tables;
+}
+
+/* 「通用接口 / 功能方法」这种元数据表：两列，左边是名目，不是字段 */
+function isMetaTable(t){
+  if(!t||!t.rows||t.rows.length<2) return false;
+  return t.rows.some(r=>{
+    const a=String((r&&r[0])||'').replace(/\s/g,'');
+    return a==='通用接口'||a==='功能方法'||a==='服务名'||/^serviceName$/i.test(a);
+  });
+}
+function metaOf(tables){
+  const out={svc:'',func:''};
+  (tables||[]).forEach(t=>{
+    if(!isMetaTable(t)) return;
+    t.rows.forEach(r=>{
+      const k=String((r&&r[0])||'').replace(/\s/g,'');
+      const v=String((r&&r[1])||'').trim();
+      if(!v) return;
+      if(/通用接口|服务名|serviceName/i.test(k)) out.svc=out.svc||v;
+      else if(/功能方法|方法名|method/i.test(k)) out.func=out.func||v;
+    });
+  });
+  return out;
+}
+/* 字段表：有「类型」列；「返回信息」表（表头是 数据库类型）与校验规则表（没有类型列）都不算 */
+function isFieldTable(t){
+  if(!t||!t.rows||t.rows.length<2) return false;
+  const h=(t.rows[0]||[]).map(c=>String(c||''));
+  if(!h.some(c=>/(Java)?类型/.test(c))) return false;
+  if(h.some(c=>/数据库类型/.test(c))) return false;    // 返回信息表（表头是 数据库类型）
+  if(/返回信息|返回参数|响应字段|出参/.test(String(t.caption||''))) return false;
+  return true;
+}
+/* 按 heading2 切接口；只有「至少 2 节带元数据表」才认定是这种文档，否则返回 null 交回老流程 */
+function sliceByHeading(tables){
+  const list=(tables||[]).filter(t=>t&&t.rows&&t.rows.length>1);
+  if(!list.length) return null;
+  const secs=[]; let cur=null;
+  list.forEach(t=>{
+    const h2=String((t.heads&&t.heads[1])||'').trim();
+    if(!h2){ if(cur) cur.tables.push(t); else { cur={h2:'',tables:[t]}; secs.push(cur) } return }
+    if(cur&&cur.h2===h2){ cur.tables.push(t); return }
+    cur={h2:h2,tables:[t]}; secs.push(cur);
+  });
+  /* V1.11.0：没有「一接口一节」的分节，就不认这种文档，交回老流程 */
+  if(!secs.filter(s=>s.tables.some(isMetaTable)).length) return null;
+  return secs.filter(s=>s.tables.some(isFieldTable)).map(s=>({
+    h2:s.h2,
+    name:ifaceTitleName(s.h2)||s.h2||'接口',
+    meta:metaOf(s.tables),
+    tables:s.tables,
+    warn:/暂不支持|忽略这部分/.test(s.h2)
+  }));
+}
+
+/* 「快递箱」键：报文里没有这一层，内容直接铺在父层（jsonData 就是 data 本身） */
+const BOX_KEYS={jsondata:1,data:1,body:1,params:1,param:1,reqdata:1,requestbody:1,reqbody:1,payload:1};
+/* 文档写法 → 实测报文写法。实测来源：CIIS 换券事件上行实际发通的报文，
+   文档里写 exchangeBondDataList / transdate / securityCode，报文里是 exchangeBondList / transDate / securityId。
+   以后遇到新的不一致，按同样格式往下加即可。 */
+const MSG_ALIAS={transdate:'transDate', securitycode:'securityId',
+                 exchangebonddatalist:'exchangeBondList'};
+/* 文档有、报文里没有的字段：仍然建出来，但默认不勾（避免发出多余的 key） */
+const MSG_OFF=['tradeInfo.sessionId','tradeInfo.approvalValidDate'];
+/* 层级修正与补充字段（只对出现了 tradeInfo 的接口生效） */
+const MSG_MOVE=[{k:'tradeInfo.exchangeBondList.isCoupon', to:'tradeInfo'}];
+const MSG_ADD=[{to:'tradeInfo', f:{key:'eventCategory', n:'事件类别', t:'String', r:1,
+  v0:'REPO_EXCHANGE', note:'文档里没有这一项，实测报文在 tradeInfo 这一层'}}];
+function aliasKey(k){
+  const s=String(k||'');
+  return MSG_ALIAS[s.toLowerCase()]||s;
+}
+function reEsc(s){ return String(s).replace(/[.*+?^${}()|[\]\\]/g,'\\$&') }
+function tabText(t){
+  return [t.caption||'', (t.heads&&t.heads[3])||'', (t.heads&&t.heads[2])||''].join(' ');
+}
+/* 按「备注里的类名 / 字段名」找它指向的子表 */
+function findSubTable(tabs, used, token){
+  const tks=[];
+  const push=x=>{ x=String(x||'').trim(); if(x.length>1&&!tks.includes(x)) tks.push(x) };
+  push(token);
+  (String(token).match(/[A-Za-z][A-Za-z0-9_]{2,}/g)||[]).forEach(push);
+  for(const tk of tks){
+    const re=new RegExp(reEsc(tk),'i');
+    const hit=tabs.find(t=>!used.has(t)&&re.test(tabText(t)));
+    if(hit) return hit;
+  }
+  return null;
+}
+function listTypeOf(t){
+  const m=/^List\s*<\s*([A-Za-z0-9_.]+)\s*>$/i.exec(String(t||'').replace(/\s+/g,''));
+  return m?m[1]:null;
+}
+function objTypeOf(t){
+  const s=String(t||'').replace(/\s+/g,'');
+  if(!s||/JSONObject|JSONArray|Map|Object|List/i.test(s)) return null;
+  return /^[A-Z][A-Za-z0-9_]*$/.test(s)?s:null;
+}
+
+/* 一个接口段落 → 一棵树形协议模型（env / objects / arrays，字段 k 用全路径） */
+function buildIfaceModel(sec){
+  const tabs=(sec.tables||[]).filter(isFieldTable);
+  if(!tabs.length) throw new Error('这一段里没有带「类型」列的字段表');
+  const used=new Set();
+  let rootTab=tabs.find(t=>/请求参数|入参|请求字段/.test(tabText(t)));
+  if(!rootTab) rootTab=tabs[0];
+  used.add(rootTab);
+
+  const env=[], objects=[], arrays=[], nodeAt={};
+  const keyOf=path=>path.join('.');
+  const addNode=(path,label,kind)=>{
+    const key=keyOf(path);
+    if(nodeAt[key]) return nodeAt[key];
+    const n=kind==='arr'
+      ? {key, path:path.slice(), title:label||key, fields:[], on:true}
+      : {key, path:path.slice(), title:label||key, fields:[]};
+    nodeAt[key]=n;
+    (kind==='arr'?arrays:objects).push(n);
+    return n;
+  };
+  /* 字段落位：null=报文根（env）；对象节点=全路径 k；数组节点=列名（列内唯一即可） */
+  const putField=(holder, path, fd, extra)=>{
+    const leaf=aliasKey(fd.k);
+    const base=Object.assign({},fd,extra||{});
+    /* 文档类型是 Boolean（isCoupon 这类）→ 导出时按 true / false，而不是字符串 */
+    if(/^bool/i.test(String(base.dt||''))) base.bool=1;
+    if(!holder){
+      const p=path.concat(leaf);
+      env.push(Object.assign(base,{k:keyOf(p), disp:leaf, path:p, ckd:(fd.r?1:0)}));
+    } else if(arrays.indexOf(holder)>=0){
+      holder.fields.push(Object.assign(base,{k:leaf, disp:leaf, ckd:(fd.r?1:0)}));
+    } else {
+      const p=path.concat(leaf);
+      holder.fields.push(Object.assign(base,{k:keyOf(p), disp:leaf, path:p, ckd:(fd.r?1:0)}));
+    }
+  };
+
+  /* 广度优先：一张表 → 标量行变字段，引用行（List<> / JSONObject / XxxVO）变子节点 */
+  const queue=[{tab:rootTab, path:[], holder:null}];
+  let guard=0;
+  while(queue.length&&guard++<48){
+    const job=queue.shift();
+    const rows=rowsToFields(job.tab.rows, mapHeader(job.tab.rows[0]||[]));
+    rows.forEach(fd=>{
+      const lk=listTypeOf(fd.t), ot=objTypeOf(fd.t);
+      const isJson=/JSONObject|JSONArray|Map/i.test(String(fd.t||''));
+      if(!lk&&!ot&&!isJson){ putField(job.holder, job.path, fd); return }
+      /* 引用行：备注里的类名 → 指向的那张表 */
+      const hints=(String(fd.note||'').match(/[A-Za-z][A-Za-z0-9_]{2,}/g)||[]).concat([fd.k]);
+      let sub=null;
+      for(const h of hints){ sub=findSubTable(tabs, used, h); if(sub) break }
+      if(!sub){
+        /* 找不到子表：JSON 结构的当 JSON 字段（按原样导出），其余仍当标量，绝不丢字段 */
+        putField(job.holder, job.path, fd,
+          (isJson||ot)?{t:fd.t||'JSONObject', json:1, note:(fd.note||'')+'（文档里没找到它的字段表，按 JSON 原样填）'}:null);
+        return;
+      }
+      used.add(sub);
+      const box=!!BOX_KEYS[String(fd.k).toLowerCase()];
+      let path, holder;
+      if(box){ path=job.path.slice(); holder=job.holder }        // 箱子：内容铺在父层，不建这一层
+      else if(lk){ path=job.path.concat(aliasKey(fd.k)); holder=addNode(path,(fd.n||aliasKey(fd.k)),'arr') }
+      else { path=job.path.concat(aliasKey(fd.k)); holder=addNode(path,(fd.n||aliasKey(fd.k)),'obj') }
+      queue.push({tab:sub, path, holder});
+    });
+  }
+  /* 没被任何引用指到的字段表：当根级数组兜底（宁可多一张，也别把字段漏掉） */
+  tabs.filter(t=>!used.has(t)).forEach(t=>{
+    const rows=rowsToFields(t.rows, mapHeader(t.rows[0]||[]));
+    if(!rows.length) return;
+    const toks=(String(t.caption||'')+(t.heads&&t.heads[3]?' '+t.heads[3]:'')).match(/[A-Za-z][A-Za-z0-9_]{2,}/g)||[];
+    const nm=aliasKey(toks[toks.length-1]||('arr'+arrays.length));
+    const path=[nm];
+    if(nodeAt[keyOf(path)]) return;
+    const a=addNode(path, t.caption||nm, 'arr');
+    rows.forEach(fd=>putField(a, path, fd));
+  });
+
+  /* 文档有、报文没有的字段：按全路径精确匹配，只关掉本来要关的那一个
+     （approvalValidDate 在删除接口里也有，不能连带关了） */
+  MSG_OFF.forEach(k=>{
+    env.concat(objects.reduce((x,o)=>x.concat(o.fields||[]),[])).forEach(f=>{
+      if(f.k===k) f.off=1;
+    });
+  });
+  /* 层级修正：文档把 isCoupon 写在数组元素里，报文里在 tradeInfo 这一层 */
+  const objOf=k=>objects.find(o=>o.key===k);
+  MSG_MOVE.forEach(mv=>{
+    const parts=String(mv.k).split('.'), leaf=parts.pop(), from=parts.join('.');
+    const src=objOf(from)||arrays.find(a=>a.key===from);
+    if(!src) return;
+    const i=(src.fields||[]).findIndex(f=>f.disp===leaf||f.k===mv.k);
+    if(i<0) return;
+    const tgt=objOf(mv.to); if(!tgt) return;
+    const f=src.fields.splice(i,1)[0];
+    const p=tgt.path.concat(leaf);
+    tgt.fields.push(Object.assign({},f,{k:keyOf(p), disp:leaf, path:p}));
+  });
+  /* 补充字段：文档里根本没有、报文里必带的 */
+  MSG_ADD.forEach(ad=>{
+    const tgt=objOf(ad.to); if(!tgt) return;
+    if((tgt.fields||[]).some(f=>f.disp===ad.f.key)) return;
+    const p=tgt.path.concat(ad.f.key);
+    tgt.fields.push(Object.assign({},ad.f,{k:keyOf(p), disp:ad.f.key, path:p, ckd:1}));
+  });
+
+  if(!env.length&&!objects.length&&!arrays.length) throw new Error('没有解析出任何字段');
+  return {tree:true, iface:sec.name, meta:{svc:(sec.meta||{}).svc||'', func:(sec.meta||{}).func||''},
+          envName:'报文根字段（data 第一层）', env, main:null, objects, arrays,
+          /* 文档里写 Number / BigDecimal 的字段按数字发（dealer 在报文里就是 1074，不是 "1074"） */
+          numHint:true,
+          shell:{pre:'D.762'}};
+}
+
 /* ========================= 报文协议库（V1.3.0） ========================= */
 function protoFieldCount(p){
   const m=p&&p.model; if(!m) return 0;
@@ -3197,6 +3545,9 @@ function activateProto(id){
   MODEL=p.model||buildDefaultModel(); recompute();
   S=normalizeState(p.state);
   setSeg(); renderAll(); renderProtoBar(); saveLibNow();
+  /* V1.11.0：协议自带「功能方法」时，切过来就把接口名对齐到它 ——
+     否则从「新增」切到「删除」还留着新增的 serviceName，报文会发给错的方法。 */
+  if(MODEL&&MODEL.meta&&MODEL.meta.func) applyIfaceMeta(MODEL);
   $('impMask').classList.remove('open');
   msg('inMsg','ok','已切换到协议《'+p.name+'》'+
     (p.source?'（来源：'+p.source+'）':'')+'：字段 '+protoFieldCount(p)+' 项，填写值已按该协议恢复。');
@@ -3239,11 +3590,12 @@ function openMultiImport(items, fileName){
   mulPending={file:fileName||'', items:items};
   $('mulTitle').textContent='识别到 '+items.length+' 个接口';
   const badN=items.filter(x=>!x.model).length;
-  $('mulInfo').innerHTML='文档《'+esc(fileName||'字段文档')+'》里按表标题识别到 <b>'+
+  $('mulInfo').innerHTML='文档《'+esc(fileName||'字段文档')+'》里按章节标题识别到 <b>'+
     items.length+' 个接口</b>，每个接口会建成<b>独立的协议</b>（字段互不干扰，不再揉在一起）。'+
     '协议名可以直接改；不想建的取消勾选。'+
-    '<br>判断依据是表标题：含「接口 / 报文字段 / 请求报文 / 字段说明」，或含 XxxService、Service.method 这类字样。'+
-    '要是把同一个接口的附属表拆成了两条，取消多出来的那条勾选即可。'+
+    '<br>切分依据：文档的二级标题（每个接口一节）+ 每节的「通用接口 / 功能方法」表。'+
+    '字段层级按 JSONObject / List&lt;XxxBO&gt; / XxxVO 的引用关系挂到父节点；返回信息表、校验规则表不建字段。'+
+    '建完会把「功能方法」自动填进接口名（serviceName）。'+
     (badN?'<br>其中 <b>'+badN+' 组</b>没能解析出字段，已置灰跳过（原因见该行）。':'');
   renderMulList();
   $('mulMask').classList.add('open');
@@ -3261,8 +3613,10 @@ function renderMulList(){
         '<input type="text" id="mulName'+i+'" data-mulname="'+i+'" value="'+esc(it.name||'')+'"'+
           (ok?'':' disabled')+' placeholder="协议名称">'+
         '<div class="sub">'+(ok
-          ? '原标题：'+esc(it.caption||'（表格前没有标题）')
-          : '无法建立：'+esc(it.err||'解析失败'))+'</div>'+
+          ? (it.heading?'章节：'+esc(it.heading)+'<br>':'原标题：'+esc(it.caption||'（表格前没有标题）')+'<br>')+
+            (it.meta&&it.meta.func?'serviceName：'+esc(it.meta.func):'没有识别到「功能方法」行')
+          : '无法建立：'+esc(it.err||'解析失败'))+
+          (it.warn?'<br><b>文档标注「本版暂不支持」，默认仍建出来，不要就取消勾选</b>':'')+'</div>'+
       '</div>'+
       '<div class="cnt">'+(ok?('表 '+it.tables.length+' 张<br>字段 '+nf+' 项'):'跳过')+'</div>'+
     '</div>';
@@ -3279,6 +3633,18 @@ function updateMulFoot(){
 }
 function closeMulModal(){ $('mulMask').classList.remove('open'); mulPending=null; }
 /* 按勾选项逐个建协议；名字重名自动加 (2)，切到第一份 */
+/* V1.11.0：把「功能方法」那串自动填进接口名（serviceName），withEnv 默认「否」——
+   建完协议就能直接发，不用手敲 com.xxx.Service.method。跟着环境保存，换环境各自一份。 */
+function applyIfaceMeta(m){
+  if(!m||!m.meta||!m.meta.func) return false;
+  const svc=String(m.meta.func).trim();
+  const el=$('apiSvcName'); if(el) el.value=svc;
+  if($('apiWithEnv')) $('apiWithEnv').value='0';
+  const e=activeEnv();
+  if(e){ e.svcName=svc; e.withEnv=false; saveEnvLib(); }
+  renderApiPkg();
+  return true;
+}
 function createProtosFromGroups(){
   if(!mulPending) return;                       /* 代码评审：closeMulModal 会清空 mulPending，先取出 */
   const items=mulPending.items.filter(x=>x.model&&x.checked);
@@ -3294,9 +3660,13 @@ function createProtosFromGroups(){
     names.push(p.name+'（'+protoFieldCount(p)+' 字段）');
   });
   activateProto(firstId);
+  /* V1.11.0：第一份协议的「功能方法」直接填进接口名，建完就能发 */
+  const first=items[0];
+  const hasSvc=applyIfaceMeta(first&&first.model);
   msg('inMsg','ok','已按《'+(file||'字段文档')+'》新建 '+names.length+' 份协议：\n'+
     names.map((x,i)=>'  '+(i+1)+'. '+x).join('\n')+
-    '\n各协议字段定义互相独立，填写值已清空；顶栏下拉可随时切换。');
+    '\n各协议字段定义互相独立，填写值已清空；顶栏下拉可随时切换。'+
+    (hasSvc?'\n接口名已按「功能方法」自动填好（withEnv=否），data 外壳见环境栏的「data 首元素」。':''));
 }
 /* 覆盖当前协议：只保留新定义里仍存在的字段值，旧字段值当场丢弃 */
 function applyModelToCurrent(m){
@@ -3319,6 +3689,7 @@ function applyModelToCurrent(m){
   const p=activeProto();
   if(p){ p.model=m; p.state=S; p.source=pendingFile||p.source; p.builtAt=nowStr(); p.updatedAt=nowStr(); }
   setSeg(); renderAll(); renderProtoBar(); saveLibNow();
+  applyIfaceMeta(m);      /* V1.11.0：覆盖后同样按「功能方法」刷新接口名 */
 }
 function duplicateProto(){
   const p=activeProto(); if(!p) return;
@@ -3372,14 +3743,25 @@ function exportProto(){
   msg('inMsg','ok','已导出协议《'+p.name+'》 → '+a.download+
     '\n该文件可在另一台电脑用「导入协议」直接恢复（字段定义 + 当前填写值）。');
 }
-function normalizeProto(raw){
-  if(!raw||typeof raw!=='object') return null;
-  const m=raw.model||raw.protocol||raw;
-  if(!m||!Array.isArray(m.env)) return null;
+/* V1.11.0：协议模型归一化的统一出口。
+   树形结构（objects / tree）、data 外壳（shell）、元数据（serviceName）、数字口径（numHint）
+   任何一条丢了，换电脑导入协议后报文都会变样（外壳少一层、字段全挤到根、布尔变字符串）。 */
+function pickModel(m){
   const model={envName:m.envName||'顶层字段', env:m.env,
                main:m.main||null, arrays:Array.isArray(m.arrays)?m.arrays:[],
                objects:Array.isArray(m.objects)?m.objects:[],
                tree:!!(m.tree||(Array.isArray(m.objects)&&m.objects.length))};
+  if(m.shell) model.shell=m.shell;
+  if(m.meta) model.meta=m.meta;
+  if(m.iface) model.iface=m.iface;
+  if(m.numHint) model.numHint=true;
+  return model;
+}
+function normalizeProto(raw){
+  if(!raw||typeof raw!=='object') return null;
+  const m=raw.model||raw.protocol||raw;
+  if(!m||!Array.isArray(m.env)) return null;
+  const model=pickModel(m);
   return {id:uid(), name:String(raw.name||'导入的协议').trim()||'导入的协议',
           source:raw.source||'json 导入', builtAt:raw.builtAt||nowStr(),
           updatedAt:nowStr(), model:model, state:raw.state||null};
@@ -3570,8 +3952,8 @@ function bkNormalizeProto(raw){
   if(!raw||typeof raw!=='object') return null;
   const m=raw.model||raw.protocol||raw;
   if(!m||!Array.isArray(m.env)) return null;
-  const model={envName:m.envName||'顶层字段', env:m.env,
-               main:m.main||null, arrays:Array.isArray(m.arrays)?m.arrays:[]};
+  /* 评审修正：这里原来只搬 env / main / arrays，树形协议的 objects 会被整段丢掉 —— 恢复后字段全没了 */
+  const model=pickModel(m);
   return {id:String(raw.id||uid()), name:String(raw.name||'导入的协议').trim()||'导入的协议',
           source:raw.source||'', builtAt:raw.builtAt||nowStr(),
           updatedAt:raw.updatedAt||nowStr(), model:model, state:raw.state||null};
@@ -3848,6 +4230,11 @@ document.addEventListener('input',e=>{
     const k=t.id.slice(3).toLowerCase();       // envIp → ip / envPort → port / envUser → user
     envPatch({[k]:t.value}); return;
   }
+  /* V1.11.0：data 首元素存进环境，改完立刻刷新报文预览 */
+  if(t.id==='envDataHead'){
+    if(!activeEnv()){ apiStat('warn','还没有环境：先点「记住到此环境」把地址密码存下来，data 首元素才能跟着环境保存。'); return }
+    envPatch({dataHead:t.value}); sync(); return;
+  }
   if(t.id==='envPass'){ envPatch({pass:b64enc(t.value)}); return }
   if(t.classList.contains('ni')){          // V1.6.0：名称列直接手写
     const f=MAP[t.dataset.k]; if(!f) return;
@@ -3921,6 +4308,8 @@ document.addEventListener('click',e=>{
                builtAt:nowStr(),updatedAt:nowStr(),model:m,state:null};
       LIB.list.push(p);
       activateProto(p.id);
+      /* V1.11.0：字段文档里抽到了「功能方法」就自动填接口名 */
+      const gotSvc=applyIfaceMeta(m);
       if(fromMsg&&text){
         doImport(text);   // 新协议的字段定义就来自这份报文，匹配率应为 100%
         msg('inMsg','ok','已按粘贴报文新建协议《'+p.name+'》：'+
@@ -3930,7 +4319,8 @@ document.addEventListener('click',e=>{
         return;
       }
       msg('inMsg','ok','已根据《'+(src||'字段文档')+'》新建协议《'+p.name+'》：字段 '+
-        protoFieldCount(p)+' 项，填写值已清空。\n顶栏下拉可随时切回其它协议。');
+        protoFieldCount(p)+' 项，填写值已清空。\n顶栏下拉可随时切回其它协议。'+
+        (gotSvc?'\n接口名已按文档里的「功能方法」自动填好（withEnv=否）。':''));
       return;
     }
     if(t.dataset.imp==='overwrite'){
@@ -4102,45 +4492,63 @@ document.addEventListener('click',e=>{
   f.n=v.trim();
   renderArr(a); save();
 });
+async function readDocx(buf){
+  const z=await unzip(buf);
+  const xml=new TextDecoder('utf-8').decode(await z.get('word/document.xml'));
+  let lv={};
+  try{
+    if(z.has('word/styles.xml'))
+      lv=docxStyleLevels(new TextDecoder('utf-8').decode(await z.get('word/styles.xml')));
+  }catch(e){}
+  return {tables:extractDocTables(xml,lv)};
+}
 async function handleFieldFile(e,kind){
   const file=e.target.files[0]; if(!file)return;
   const btn=e.target.closest('button'); btn.disabled=true; btn.style.opacity=.6;
   try{
     const buf=await file.arrayBuffer();
-    let tables;
+    /* V1.11.0：docx 先看是不是「一章一个接口」的需求文档（heading2 分节 + 每节有通用接口/功能方法表）。
+       是就按接口建树形协议；不是就退回 V1.10.0 的「按表标题分组」老流程。 */
     if(kind==='docx'){
-      const xml=await parseDocxBuffer(buf);
-      tables=extractTables(xml);
+      const d=await readDocx(buf);
+      const secs=sliceByHeading(d.tables);
+      if(secs&&secs.length){
+        const items=secs.map((s,i)=>{
+          let model=null, err='';
+          try{ model=buildIfaceModel(s) }
+          catch(ex){ err=ex.message||'解析失败' }
+          if(model&&protoFieldCount({model:model})<=0){ model=null; err=err||'没有识别到有效字段' }
+          return {caption:s.h2||s.name, heading:s.h2, meta:s.meta, warn:s.warn, tables:s.tables,
+                  name:s.name||('接口'+(i+1)), model:model, err:err, checked:!!model};
+        });
+        if(items.some(x=>x.model)){ openMultiImport(items,file.name); msg('inMsg','',''); return }
+        /* 全部失败：继续走老流程，让它抛出原本的错误提示 */
+      }
+      await importTables(d.tables,file.name);
     } else {
       if(!/\.xlsx$/i.test(file.name)) throw new Error('暂仅支持 .xlsx（新版 Excel）。\n旧版 .xls 请用「另存为 .xlsx」后再导入');
-      tables=await parseXlsxBuffer(buf);
+      await importTables(await parseXlsxBuffer(buf),file.name);
     }
-    /* V1.10.0：先按表标题分组。≥2 组说明文档里有多个接口 —— 这时不能再按「一张主体表 + 其余挂过去」的老逻辑，
-       否则第二、三个接口的字段会被揉进第一份协议（还会被当成数组节点）。 */
-    const groups=groupTablesByIface(tables);
-    if(groups.length>1){
-      const items=groups.map((g,i)=>{
-        let model=null, err='';
-        try{ model=buildSpecFromTables(g.tables) }
-        catch(ex){ err=ex.message||'解析失败' }
-        if(model && protoFieldCount({model:model})<=0){ model=null; err=err||'没有识别到有效字段' }
-        return {caption:g.caption, tables:g.tables,
-                /* 标题提不出名字时用序号兜底，用户还能在清单里改 */
-                name:ifaceTitleName(g.caption)||('接口'+(i+1)),
-                model:model, err:err, checked:!!model};
-      });
-      if(items.some(x=>x.model)){          /* 至少一组能建就进清单，解析失败的置灰跳过 */
-        openMultiImport(items,file.name);
-        msg('inMsg','','');
-        return;
-      }
-      /* 全部组都失败：退回老流程，让下面的 buildSpecFromTables 抛出它原本的错误提示 */
-    }
-    const m=buildSpecFromTables(tables);
-    openImpModal(m,file.name);
-    msg('inMsg','','');
   }catch(err){ msg('inMsg','err','解析文档失败：'+err.message); }
   btn.disabled=false; btn.style.opacity=1; e.target.value='';
+}
+/* 老流程（V1.10.0）：按表标题分组，一组一份协议；只有一组时进单协议弹窗 */
+async function importTables(tables,fileName){
+  const groups=groupTablesByIface(tables);
+  if(groups.length>1){
+    const items=groups.map((g,i)=>{
+      let model=null, err='';
+      try{ model=buildSpecFromTables(g.tables) }
+      catch(ex){ err=ex.message||'解析失败' }
+      if(model && protoFieldCount({model:model})<=0){ model=null; err=err||'没有识别到有效字段' }
+      return {caption:g.caption, tables:g.tables,
+              name:ifaceTitleName(g.caption)||('接口'+(i+1)),
+              model:model, err:err, checked:!!model};
+    });
+    if(items.some(x=>x.model)){ openMultiImport(items,fileName); return }
+  }
+  const m=buildSpecFromTables(tables);
+  openImpModal(m,fileName);
 }
 $('btnRestore').addEventListener('click',()=>{
   if(confirm('新建一条使用「内置默认字段定义」的协议？\n\n当前协议不受影响，之后可在顶栏下拉里切回来。')){
