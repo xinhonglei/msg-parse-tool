@@ -544,6 +544,7 @@ select:disabled{background:#f3f4f6;color:var(--txt3);cursor:not-allowed}
           <span class="chip" id="apiParamChip">0 字符</span>
           <span class="spacer"></span>
           <button class="sm" id="btnApiFormat">格式化 JSON</button>
+          <button class="sm" id="btnApiUnesc" title="参数里带多层反斜杠（从日志 / 截图复制出来的 \"D.762\"）时点这里：去掉多余转义并压成单行">去转义</button>
           <button class="sm pri" id="btnApiSend" title="发送前会确保连接已就绪；连不上就直接报真实原因（登录失败 / 端口不通），报文不会发出去">发送报文</button>
         </div>
         <div class="apinote" id="apiHint">CIIS 选「通用方法 commonServiceCall」时，在 <b>接口名（serviceName）</b>
@@ -790,8 +791,14 @@ let SCALARS=[], MAP={}, TOPKEYS=[], ARRS={};
 const LS='rms_repo_msg_tool_v1';          // V1.2 旧 key，仅作迁移来源
 const LS_MODEL='rms_repo_msg_model_v1';   // V1.2 旧 key，仅作迁移来源
 const LS_PROTO='rms_repo_msg_protocols_v2';
-const TOOL_VERSION='1.10.0';
+const TOOL_VERSION='1.10.2';
 const CHANGELOG=[
+ {v:'1.10.2', d:'2026-11-24', items:[
+   '修参数被多转义一层：参数框里带反斜杠的 JSON（从日志 / 截图复制的 [\\"D.762\\",{…}]）以前解析失败就原样发，HTTP body 再转义一层，服务端 data 里仍剩 \\"，业务层 JSON.parse 报参数异常；现在发送前自动逐层去转义并压成单行',
+   '预览里会写明「已自动去掉 n 层反斜杠转义」并摊开实际发出的内容，不悄悄改用户输入',
+   '参数区新增「去转义」按钮，可手动把参数修干净再发',
+   '只有以 { / [ 开头的内容才会做归一；Key=Value、手写三段式（serviceName= 开头）一律原样发送',
+ ]},
  {v:'1.10.0', d:'2026-11-24', items:[
    '一份 Word 文档里有多个接口时，导入可以按标题自动拆成多份协议：每个接口一份，字段互不干扰',
    '拆分后弹出清单：每组显示协议名（可改）、表数、字段数、原标题，勾选要建的，一次建多份',
@@ -1370,6 +1377,27 @@ function parseLoose(s){
     const nx=cur.replace(/\\\\/g,'\\').replace(/\\"/g,'"').replace(/\\'/g,"'");
     if(nx===cur) break;
     cur=nx;
+  }
+  throw new Error('内容不是可解析的 JSON 文本');
+}
+/* V1.10.2：和 parseLoose 同一套规则，但额外返回「去掉了几层转义」（layers）。
+   报文区那条老路径仍然用 parseLoose，这里不动它，避免影响已有行为；
+   参数框（发到接口）需要知道到底改了用户什么，才用这个带层数的版本。
+   另外：整段被引号包住时（复制了带外层转义的字符串）会再拆一层，直到拿到对象 / 数组。 */
+function parseLooseEx(s){
+  let cur=String(s).trim(), layers=0;
+  for(let i=0;i<6;i++){
+    let v=null, ok=false;
+    try{ v=JSON.parse(cur); ok=true }catch(e){
+      try{ v=tolerantParse(cur); ok=true }catch(e2){}
+    }
+    if(ok){
+      if(typeof v==='string'&&/^[\s]*[{\[]/.test(v)){ cur=v; layers++; continue }
+      return {value:v, layers:layers};
+    }
+    const nx=cur.replace(/\\\\/g,'\\').replace(/\\"/g,'"').replace(/\\'/g,"'");
+    if(nx===cur) break;
+    cur=nx; layers++;
   }
   throw new Error('内容不是可解析的 JSON 文本');
 }
@@ -2160,12 +2188,35 @@ function apiPkgOn(){
   return !!(el&&String(el.value||'').trim());
 }
 /* 三段式的 data 段：合法 JSON 压成单行。
-   三段式是「按行」解析的，多行 JSON 会把后面几行当成别的段，必串。 */
+   三段式是「按行」解析的，多行 JSON 会把后面几行当成别的段，必串。
+   ★ V1.10.2：严格解析失败时不再原样发 —— 从日志 / 截图复制来的参数常带多层反斜杠
+     （形如 [\"D.762\",{…}]），原样发出去 HTTP body 会再转义一层，服务端 data 里还剩 \"，
+     业务层 JSON.parse 就报参数异常。这里复用报文区那套「逐层去转义」，
+     修好就压成单行发，并用 unesc 把「改了几层」如实告诉界面。 */
 function pkgData(raw){
   const s=String(raw==null?'':raw);
-  if(!s.trim()) return {text:'', packed:false};
-  try{ return {text:JSON.stringify(JSON.parse(s)), packed:true} }
-  catch(e){ return {text:s, packed:false} }
+  if(!s.trim()) return {text:'', packed:false, unesc:0};
+  try{ return {text:JSON.stringify(JSON.parse(s)), packed:true, unesc:0} }
+  catch(e){
+    try{
+      const r=parseLooseEx(s);
+      return {text:JSON.stringify(r.value), packed:true, unesc:r.layers};
+    }catch(e2){
+      return {text:s, packed:false, unesc:0};
+    }
+  }
+}
+/* V1.10.2：接口名留空（发普通报文）时的参数归一。
+   只处理以 { / [ / " 开头的内容 —— Key=Value、手写三段式这类纯文本一律原样发，不碰。
+   （" 开头是「整段被引号包住」的粘贴形态，parseLooseEx 会拆到里层的对象 / 数组。）
+   layers 为 0 时也保持用户原文（含多行缩进），只有真去掉了转义才替换文本。 */
+function normRaw(raw){
+  const s=String(raw==null?'':raw);
+  if(!/^[\s]*[\[{"]/.test(s)) return {text:s, unesc:0};
+  try{
+    const r=parseLooseEx(s);
+    return {text:(r.layers>0?JSON.stringify(r.value):s), unesc:r.layers};
+  }catch(e){ return {text:s, unesc:0} }
 }
 /* 统一的 params 出口：三段式开启时拼三行，否则原样返回参数框内容。
    multiline 表示 data 非 JSON 却含换行 —— 只提示，不改用户的内容。 */
@@ -2177,12 +2228,16 @@ function buildParams(rawParams){
   /* 老用法兼容：参数框里已经是手写的三段式（serviceName= 开头）、接口名框又空着，
      就原样发出去，绝不再包一层（否则 serviceName 里套 serviceName） */
   const legacy=(!svc&&/^\s*serviceName\s*[=:]/i.test(raw));
-  if(!svc) return {text:raw, pkg:false, multiline:false, svc:'', withEnv:false, legacy:legacy};
+  if(!svc){
+    const n=legacy?{text:raw,unesc:0}:normRaw(raw);
+    return {text:n.text, pkg:false, multiline:false, svc:'', withEnv:false, legacy:legacy, unesc:n.unesc};
+  }
   const d=pkgData(raw);
   const withEnv=!!($('apiWithEnv')&&$('apiWithEnv').value==='1');
   return {
     text:'serviceName='+svc+'\ndata='+d.text+'\nwithEnv='+(withEnv?'true':'false'),
-    pkg:true, multiline:(!d.packed&&/[\r\n]/.test(d.text)), svc:svc, withEnv:withEnv, legacy:false
+    pkg:true, multiline:(!d.packed&&/[\r\n]/.test(d.text)), svc:svc, withEnv:withEnv, legacy:false,
+    unesc:d.unesc
   };
 }
 /* 界面联动：接口名有值就高亮整块、参数标题改 data、启用 withEnv 下拉、刷新拼装预览 */
@@ -2206,12 +2261,18 @@ function renderApiPkg(){
       prev.style.display='';
       prev.textContent='注意：参数框里是手写的三段式（serviceName= 开头），会原样发送。'+
         '建议把接口名填到上面「接口名（serviceName）」框，交给工具拼装 —— 这样 data 里的多行 JSON 会被自动压成一行。';
+    }else if(b.unesc>0){
+      /* V1.10.2：去掉了转义就把「实际发出去的内容」摊开给用户看，不悄悄改 */
+      prev.style.display='';
+      prev.textContent='已自动去掉 '+b.unesc+' 层反斜杠转义，实际发出去的是：\n'+b.text;
     }else{ prev.style.display='none'; prev.textContent='' }
     return;
   }
   prev.style.display='';
-  prev.textContent=b.text+(b.multiline
-    ? '\n\n⚠ data 里有多行但不是 JSON：三段式按行解析，可能串行。请压成一行再发。' : '');
+  prev.textContent=b.text
+    +(b.unesc>0?'\n\n（已自动去掉 '+b.unesc+' 层反斜杠转义，data 压成单行）':'')
+    +(b.multiline
+      ? '\n\n⚠ data 里有多行但不是 JSON：三段式按行解析，可能串行。请压成一行再发。' : '');
 }
 /* ---- 网络 ---- */
 function sleep(ms){ return new Promise(function(r){ setTimeout(r,ms) }) }
@@ -2430,7 +2491,9 @@ async function sendNow(){
      代码评审修正：只有空白字符也按空参处理，真发空字符串 —— 确认框上写的是会发 ""，
      不能把几个空格当成「参数」塞给后端。 */
   const packed=buildParams(rawParams);
-  const params=packed.pkg?packed.text:(rawParams.trim()?rawParams:'');
+  /* V1.10.2：非三段式也走 packed.text —— 里面做过「去转义」归一（只对 JSON 内容生效），
+     否则这里拿 rawParams 会把修好的文本又丢掉，等于没改。 */
+  const params=packed.text.trim()?packed.text:'';
   const empty=!params.trim();
   const emptyTag=(packed.pkg?'三段式 · ':'')+(empty?'空参 · ':'');
   const body={ip:ip,port:port,userName:user,password:pass,service:svc,method:mth,params:params};
@@ -2550,6 +2613,25 @@ function apiFormatParams(){
   }catch(e){
     apiStat('warn','参数不是合法 JSON（三段式或 Key=Value 时保持原样即可）：'+esc(e.message));
   }
+}
+/* V1.10.2：手动去转义 —— 参数是从日志 / 截图复制的，引号前一堆反斜杠时点一下，
+   去掉多余转义并压成单行。只处理以 { / [ 开头的内容，Key=Value 与手写三段式不动。 */
+function apiUnescapeParams(){
+  const s=$('apiParams').value;
+  if(!s.trim()) return apiStat('bad','参数为空。');
+  if(!/^[\s]*[\[{"]/.test(s))
+    return apiStat('warn','当前参数不是 JSON（Key=Value 或手写三段式），不需要去转义，保持原样即可。');
+  let r;
+  try{ r=parseLooseEx(s) }
+  catch(e){ return apiStat('bad','去转义后仍然不是合法 JSON，请检查内容是否完整：'+esc(e.message)) }
+  if(r.layers===0){
+    apiStat('ok','参数本来就是干净的 JSON（没有多余反斜杠），不用去转义。要排版可以点「格式化 JSON」。');
+    return;
+  }
+  $('apiParams').value=JSON.stringify(r.value);
+  updateApiParamChip();
+  renderApiPkg();
+  apiStat('ok','已去掉 '+r.layers+' 层反斜杠转义，参数压成单行 JSON（'+$('apiParams').value.length+' 字符），可以发送了。');
 }
 function toApi(){
   document.querySelectorAll('#tabs .tab').forEach(x=>x.classList.toggle('active',x.dataset.v==='api'));
@@ -3898,6 +3980,7 @@ document.addEventListener('click',e=>{
   if(t.id==='btnToApi'){ toApi(); return }
   if(t.id==='btnApiTake'){ apiTake(); return }
   if(t.id==='btnApiFormat'){ apiFormatParams(); return }
+  if(t.id==='btnApiUnesc'){ apiUnescapeParams(); return }
   if(t.id==='btnApiSend'){ apiSend(); return }
   if(t.id==='btnApiConnect'){ apiConnect(); return }
   if(t.id==='btnApiClear'){ apiClear(); return }
