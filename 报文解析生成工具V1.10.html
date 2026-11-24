@@ -394,6 +394,7 @@ select:disabled{background:#f3f4f6;color:var(--txt3);cursor:not-allowed}
         <button class="sm" id="btnRestore">恢复默认</button>
         <button class="sm" id="btnParse">解析</button>
         <button class="sm pri" id="btnNewFromMsg" title="按粘贴报文的真实结构新建一份独立协议（对象分组 / 数组表格），不与现有协议混用">＋建为协议</button>
+        <button class="sm pri" id="btnCalib" title="把真实报文粘进来，按它校正**当前协议**的字段结构：同名字段已填的值保留，接口名 / data 外壳不变">≡ 按报文校准</button>
         <button class="sm pri" id="btnNames" title="粘贴字段说明（或导入 docx / xlsx），按字段标识自动匹配填充名称列">补充字段名称</button>
         <button class="sm" id="btnClearIn">清空</button>
       </div>
@@ -795,8 +796,19 @@ let SCALARS=[], MAP={}, TOPKEYS=[], ARRS={};
 const LS='rms_repo_msg_tool_v1';          // V1.2 旧 key，仅作迁移来源
 const LS_MODEL='rms_repo_msg_model_v1';   // V1.2 旧 key，仅作迁移来源
 const LS_PROTO='rms_repo_msg_protocols_v2';
-const TOOL_VERSION='1.11.1';
+const TOOL_VERSION='1.12.0';
 const CHANGELOG=[
+ {v:'1.12.0', d:'2026-11-24', items:[
+   '新增「≡ 按报文校准」：把真实报文粘进「报文」框 → 点它，就按这份报文校正当前协议的字段结构（键名、层级、多出来的数组列），确认前先列出「多出 N 项 / 协议多出 M 项 / 同名 K 项」',
+   '校准只换结构：同名字段已填的值原样保留，接口名、data 外壳、数值口径都不变；要留旧结构可以先「重命名」复制一份',
+   '报文框支持直接粘贴整段三段式（serviceName= / data= / withEnv=），工具会自己取 data 那一段；三槽外壳 ["D.959","33333",["{…}"]] 也能剥到里面的对象',
+ ]},
+ {v:'1.11.2', d:'2026-11-24', items:[
+   '纠正 data 三槽的归属：第 0 项就是 cusNumber「套别.机构号」（D.959），第 1 项就是 sessionId「会话ID」（33333）—— 两者都是文档里的字段，不是常量，所以删掉了「交易码」这个概念和环境里那一格',
+   'sessionId 从 tradeInfo 里搬出来，和 cusNumber 一起放进报文根的「data 头部参数」，框里的先后顺序就是槽位顺序（改值即改报文，不用改代码）',
+   '外壳改为「全部由字段取值」（ver3）：[套别.机构号, 会话ID, [事件JSON字符串]]，没有常量槽',
+   'V1.11.0 / V1.11.1 建的协议载入时自动转成 ver3：常量槽丢弃、sessionId 从 tradeInfo 里摘到第 1 项（不会同一字段发两遍）',
+ ]},
  {v:'1.11.1', d:'2026-11-24', items:[
    'data 外壳改成实测的三槽结构：原来是 ["D.762", 报文对象]，实际报文是 ["D.959", "33333", ["{\\"tradeInfo\\":…}"]]，两槽发出去服务端一定报参数异常',
    '第 1 项不是对象里的键而是按位置放的参数（cusNumber「套别.机构号」）：导出时从报文对象里摘出来放到数组第 1 项，对象里不再留这个键',
@@ -1153,14 +1165,16 @@ function renderExtra(){
     '<div style="padding:10px 12px;color:var(--txt3)">无额外字段</div>';
 }
 function renderAll(){renderGroups();renderExtra();syncShellUI();sync()}
-/* V1.11.0：环境栏里的「data 首元素」只在协议带外壳时显示；值跟着环境走，没配过就显示协议默认 */
+/* 环境栏里的「data 首元素」只有老协议（ver<3，还有常量槽）才显示。
+   V1.11.2 起三槽全是字段（套别.机构号 / 会话ID），不再需要这一格。 */
 function syncShellUI(){
   const box=$('envDataHeadBox'); if(!box) return;
-  const has=!!(MODEL&&MODEL.shell);
+  const pre=(MODEL&&MODEL.shell&&MODEL.shell.pre)?String(MODEL.shell.pre):'';
+  const has=!!pre;
   box.style.display=has?'':'none';
   if(!has||!$('envDataHead')) return;
   const e=activeEnv();
-  $('envDataHead').value=(e&&e.dataHead!=null)?String(e.dataHead):(MODEL.shell.pre||'');
+  $('envDataHead').value=(e&&e.dataHead!=null)?String(e.dataHead):pre;
 }
 
 /* ========================= 导出 ========================= */
@@ -1284,33 +1298,56 @@ function buildPayload(){
   }
   return payload;
 }
-/* 外壳拼装：把 cusNumber 这类「按位置放」的字段从对象里摘出来，事件对象再序列化成字符串。
-   返回 [pre, …take, [JSON字符串]]；老协议没有 take/strList 时退回 [pre, 报文]。 */
+/* 外壳拼装（ver3 三槽口径）：
+   data = [槽0, 槽1, …, [ 事件JSON字符串 ]]
+   - take 里的字段按顺序取值，并从报文对象里摘掉（报文里它们是数组项，不是对象键）
+   - 最后一项是 List<批量事件>：整个事件对象先 JSON.stringify 成字符串，再装进单元素数组
+   - 一个 take 都没有、也没有常量槽时原样返回（老的非树形协议不受影响） */
 function applyShell(payload){
   const sh=MODEL.shell||{};
-  const h=shellHead();
-  if(h==='') return payload;                       /* 留空 = 不套外壳，方便临时发裸报文 */
+  const take=Array.isArray(sh.take)?sh.take:[];
+  const strList=!!sh.strList;
+  const pre=shellHead();
+  if(!take.length&&!strList&&pre==='') return payload;
   const p=(payload&&typeof payload==='object'&&!Array.isArray(payload))?payload:null;
-  const out=[h];
-  (sh.take||[]).forEach(k=>{
-    let v=null;
-    if(p&&Object.prototype.hasOwnProperty.call(p,k)){ v=p[k]; delete p[k]; }
-    else if(S.v&&S.v[k]!=null) v=S.v[k];           /* 没勾选也要占位：位置参数不能少一项 */
-    out.push(v==null?'':v);
-  });
-  if(sh.strList){
-    /* List<批量事件> 里装的是字符串，不是对象 —— 少这一层 stringify 服务端就报参数异常 */
+  const out=[];
+  if(pre!=='') out.push(pre);                      /* 只有老协议（ver<3）才有常量槽 */
+  take.forEach(k=>{ out.push(takeValue(p,k)) });
+  if(strList){
     out.push([JSON.stringify(p)]);
   }else{
     out.push(p);
   }
   return out;
 }
-/* 外壳首元素：环境里显式配了就用环境的（空串表示不套），没配过才退协议的默认值 */
+/* 取槽位的值：先看报文对象顶层，再看对象里一层（老协议 sessionId 在 tradeInfo 里），
+   最后退回表单里填的值（没勾选也要占位，否则后面所有槽位错位） */
+function takeValue(p,key){
+  const leaf=String(key).split('.').pop();
+  if(p&&Object.prototype.hasOwnProperty.call(p,key)){
+    const v=p[key]; delete p[key]; return v==null?'':v;
+  }
+  if(p){
+    for(const nk in p){
+      const node=p[nk];
+      if(!node||typeof node!=='object'||Array.isArray(node)) continue;
+      if(Object.prototype.hasOwnProperty.call(node,leaf)&&isTakeField(leaf)){
+        const v=node[leaf]; delete node[leaf]; return v==null?'':v;
+      }
+    }
+  }
+  const f=(MAP&&MAP[key])||null;
+  const v=S.v?(S.v[key]!=null?S.v[key]:(f?S.v[f.k]:null)):null;
+  return v==null?'':v;
+}
+/* 只有登记成「位置参数」的名字才允许从对象里摘，避免误删同名业务字段 */
+function isTakeField(leaf){
+  return ((MODEL.shell&&MODEL.shell.take)||[]).some(k=>String(k).split('.').pop()===leaf);
+}
+/* 外壳常量槽：只有老协议（ver<3）有，ver3 的三个槽全是字段，没有常量 */
 function shellHead(){
-  const e=activeEnv();
-  if(e&&e.dataHead!=null) return String(e.dataHead).trim();
-  return (MODEL&&MODEL.shell&&MODEL.shell.pre)?String(MODEL.shell.pre):'';
+  const sh=(MODEL&&MODEL.shell)||{};
+  return sh.pre?String(sh.pre):'';
 }
 function setPath(o,path,val){let c=o;for(let i=0;i<path.length-1;i++)c=c[path[i]];
   c[path[path.length-1]]=val}
@@ -1716,22 +1753,130 @@ function buildModelFromPayload(payload){
   walk(payload||[], [], env);
   return {tree:true, envName:'报文根字段', env:env, main:null, objects:objects, arrays:arrays};
 }
+/* 从文本框拿一份「报文对象」：支持三种贴法 ——
+   ① 整段三段式（serviceName= / data= / withEnv=，直接把我发出去的那块日志贴进来即可）
+   ② 只有 data 的那一截（["D.959","33333",["…"]]）
+   ③ 纯报文对象 {…}
+   stripWrap=true 时再剥一层网关包装（params / data / body …），给「建为协议」用；
+   校准不剥，免得报文里本来就有个叫 data 的键被当包装剥掉。 */
+function payloadFromText(txt,stripWrap){
+  let s=String(txt||'').trim();
+  if(/^\s*serviceName\s*=/m.test(s)){
+    const m=/^[ \t]*data[ \t]*=[ \t]*([\s\S]*?)(?=^[ \t]*(?:withEnv|serviceName)[ \t]*=|$)/m.exec(s);
+    if(m&&m[1].trim()) s=m[1].trim();
+  }
+  if(looksLikeKV(s)) return unwrap(parseKV(s)).payload;
+  /* 不能用 peel：它只跟数组的第 0 项，三槽外壳的第 0 项是「套别.机构号」字符串，会当场抛错 */
+  const obj=deepestObject(parseLoose(s));
+  if(!obj) return null;
+  if(!stripWrap) return obj;
+  try{ return unwrap(obj).payload }catch(e){ return obj }
+}
+/* 往里剥：数组里挨个找，字符串里 JSON.parse，直到拿到对象为止（最多 8 层）。
+   三槽外壳 ["D.959","33333",["{…}"]] 会被剥到 {tradeInfo:…} —— 注意字符串是包在数组里的，
+   所以要递归走，不能只看第一层。 */
+function deepestObject(p){
+  const walk=(v,depth)=>{
+    if(v==null||depth>8) return null;
+    if(typeof v==='object'&&!Array.isArray(v)) return v;
+    if(Array.isArray(v)){
+      for(const x of v){ const r=walk(x,depth+1); if(r) return r }
+      return null;
+    }
+    if(typeof v==='string'&&/^\s*[\[{]/.test(v)){
+      try{ return walk(JSON.parse(v),depth+1) }catch(e){ return null }
+    }
+    return null;
+  };
+  return walk(p,0);
+}
 /* 从报文新建协议：解析 → 反推结构 → 复用确认弹窗（可改名）→ 带入报文值 */
 function newProtoFromMsg(){
   const txt=($('inTxt').value||'').trim();
   if(!txt) return msg('inMsg','err','请先把报文粘贴到上方文本框，再点「＋建为协议」。');
   let p;
-  try{
-    if(looksLikeKV(txt)){ p=unwrap(parseKV(txt)).payload; }
-    else{ p=unwrap(peel(parseLoose(txt)).value).payload; }
-  }catch(e){ return msg('inMsg','err','解析失败：'+e.message) }
-  if(!p||typeof p!=='object'||Array.isArray(p)) return msg('inMsg','err','解析失败：解析结果不是报文对象，无法反推字段。');
+  try{ p=payloadFromText(txt,true) }
+  catch(e){ return msg('inMsg','err','解析失败：'+e.message) }
+  if(!p) return msg('inMsg','err','解析失败：解析结果不是报文对象，无法反推字段。');
   const m=buildModelFromPayload(p);
   const nf=protoFieldCount({model:m});
   if(!nf&&!m.arrays.length) return msg('inMsg','err','这份报文里没有可识别的字段（可能是空对象 {}）。');
   const topKey=m.objects.length?m.objects[0].key.split('.').pop():
                (m.arrays.length?m.arrays[0].key.split('.').pop():'报文');
   openImpModal(m,'',{title:'按这份报文新建协议', name:topKey+' 报文', fromMsg:true, text:txt});
+}
+
+/* ========================= 按报文校准当前协议（V1.12.0） =========================
+   场景：协议是按文档建的，实际报文和文档对不上（键名不同、多了或少了字段、层级不同）。
+   做法：把**真实报文**粘进来 → 按报文反推结构 → 与当前协议逐键对比 → 确认后只换结构：
+   同名字段已填的值保留，接口名 / data 外壳 / 数字口径全部沿用当前协议。 */
+function shapeKeys(m){
+  const map={};
+  ((m&&m.env)||[]).forEach(f=>{ map[f.k]={label:String(f.disp||f.k)} });
+  ((m&&m.objects)||[]).forEach(o=>(o.fields||[]).forEach(f=>{
+    map[f.k]={label:o.key+'.'+(f.disp||f.k)} }));
+  ((m&&m.arrays)||[]).forEach(a=>{
+    map[a.key+'[]']={label:a.key+'[]'};
+    (a.fields||[]).forEach(f=>{ map[a.key+'.'+f.k]={label:a.key+'[].'+(f.disp||f.k)} });
+  });
+  return map;
+}
+function diffShape(oldM,newM){
+  const ka=shapeKeys(oldM), kb=shapeKeys(newM);
+  const add=Object.keys(kb).filter(k=>!ka[k]);
+  const drop=Object.keys(ka).filter(k=>!kb[k]);
+  const same=Object.keys(kb).filter(k=>ka[k]);
+  return {add:add.map(k=>kb[k].label), drop:drop.map(k=>ka[k].label), same:same, addK:add, dropK:drop};
+}
+function calibrateFromMsg(){
+  const txt=($('inTxt').value||'').trim();
+  if(!txt) return msg('inMsg','err','请先把**真实报文**粘贴到上方文本框，再点「≡ 按报文校准」。');
+  const cur=MODEL;
+  if(!cur||!isTree()) return msg('inMsg','err','当前协议不是树形协议（从字段文档或报文建的才支持校准）。');
+  let payload;
+  try{ payload=payloadFromText(txt) }
+  catch(e){ return msg('inMsg','err','解析失败：'+e.message) }
+  if(!payload) return msg('inMsg','err','这份报文里没有对象结构（空数组 / 纯字符串），无法校准。');
+  const newM=buildModelFromPayload(payload);
+  if(!protoFieldCount({model:newM})) return msg('inMsg','err','报文里没有可识别的字段（可能是空对象 {}）。');
+  /* 结构按报文，其余沿用当前协议 */
+  newM.shell=cur.shell; newM.meta=cur.meta; newM.iface=cur.iface;
+  newM.numHint=cur.numHint||true;
+  newM.envName=cur.envName;
+  /* 位置参数不在报文对象里（套别.机构号 / 会话ID），从当前协议搬回来，槽位才不会少 */
+  const take=(cur.shell&&cur.shell.take)||[];
+  take.forEach(k=>{
+    if((newM.env||[]).some(f=>f.k===k||f.disp===k)) return;
+    const f=(cur.env||[]).find(x=>x.k===k||x.disp===k);
+    if(f) newM.env.push(Object.assign({},f,{ckd:1,off:0}));
+  });
+  if(take.length){
+    const head=take.map(k=>newM.env.find(f=>f.k===k||f.disp===k)).filter(Boolean);
+    const rest=newM.env.filter(f=>head.indexOf(f)<0);
+    newM.env.length=0; head.concat(rest).forEach(f=>newM.env.push(f));
+  }
+  const d=diffShape(cur,newM);
+  if(!d.add.length&&!d.drop.length){
+    return msg('inMsg','ok','当前协议的结构已经和这份报文一致（'+d.same.length+' 项字段全对得上），不用校准。');
+  }
+  const li=(arr,n)=>arr.slice(0,n).map(x=>'<code>'+esc(x)+'</code>').join('、')+
+    (arr.length>n?' 等 '+arr.length+' 项':'');
+  confirmBox({
+    title:'按这份报文校准当前协议？',
+    ok:'覆盖结构',
+    html:'只换<b>字段结构</b>，同名字段已填的值保留；接口名、data 外壳、数值口径不变。'+
+      '<div style="margin-top:8px">'+
+      '<div>报文里多出 <b>'+d.add.length+'</b> 项：'+(d.add.length?li(d.add,8):'<span class="dim">无</span>')+'</div>'+
+      '<div>协议里有、报文里没有 <b>'+d.drop.length+'</b> 项（会从协议里去掉）：'+
+        (d.drop.length?li(d.drop,8):'<span class="dim">无</span>')+'</div>'+
+      '<div>同名保留 <b>'+d.same.length+'</b> 项（值不丢）</div>'+
+      '</div>'+
+      '<div class="dim" style="margin-top:8px">要保留旧结构请先「重命名」复制一份协议再校准。</div>',
+    onOk:()=>{
+      applyModelToCurrent(newM);
+      msg('inMsg','ok','已按报文校准：+'+d.add.length+' / -'+d.drop.length+' 项，同名 '+d.same.length+' 项的值已保留。');
+    }
+  });
 }
 
 /* ========================= 补充字段名称（V1.6.0） =========================
@@ -3381,7 +3526,10 @@ const BOX_KEYS={jsondata:1,data:1,body:1,params:1,param:1,reqdata:1,requestbody:
 const MSG_ALIAS={transdate:'transDate', securitycode:'securityId',
                  exchangebonddatalist:'exchangeBondList'};
 /* 文档有、报文里没有的字段：仍然建出来，但默认不勾（避免发出多余的 key） */
-const MSG_OFF=['tradeInfo.sessionId','tradeInfo.approvalValidDate'];
+const MSG_OFF=['tradeInfo.approvalValidDate'];
+/* 位置参数（按 data 数组的顺序排，不是对象键）：
+   cusNumber「套别.机构号」→ 第 0 项，sessionId「会话ID」→ 第 1 项 */
+const MSG_SHELL=['cusNumber','sessionId'];
 /* 层级修正与补充字段（只对出现了 tradeInfo 的接口生效） */
 const MSG_MOVE=[{k:'tradeInfo.exchangeBondList.isCoupon', to:'tradeInfo'}];
 const MSG_ADD=[{to:'tradeInfo', f:{key:'eventCategory', n:'事件类别', t:'String', r:1,
@@ -3523,19 +3671,37 @@ function buildIfaceModel(sec){
     const p=tgt.path.concat(ad.f.key);
     tgt.fields.push(Object.assign({},ad.f,{k:keyOf(p), disp:ad.f.key, path:p, ckd:1}));
   });
+  /* 位置参数搬到报文根：报文里 cusNumber / sessionId 是 data 数组的第 0 / 1 项，
+     不是对象里的键 ⇒ 从对象里摘出来放进 env，env 的先后顺序就是槽位顺序 */
+  MSG_SHELL.forEach(nm=>{
+    for(const o of objects){
+      const i=(o.fields||[]).findIndex(f=>f.disp===nm||f.k===nm);
+      if(i<0) continue;
+      const f=(o.fields||[]).splice(i,1)[0];
+      if(!env.some(x=>x.disp===nm))
+        env.push(Object.assign({},f,{k:nm, disp:nm, path:[nm], ckd:1, off:0}));
+      break;
+    }
+  });
+  /* 保持槽位顺序：env 按 MSG_SHELL 的次序排在前面 + 其余根字段 */
+  if(env.length){
+    const head=MSG_SHELL.map(nm=>env.find(f=>f.disp===nm)).filter(Boolean);
+    const rest=env.filter(f=>head.indexOf(f)<0);
+    env.length=0; head.concat(rest).forEach(f=>env.push(f));
+  }
 
   if(!env.length&&!objects.length&&!arrays.length) throw new Error('没有解析出任何字段');
   return {tree:true, iface:sec.name, meta:{svc:(sec.meta||{}).svc||'', func:(sec.meta||{}).func||''},
-          envName:'报文根字段（data 第一层）', env, main:null, objects, arrays,
+          envName:'data 头部参数（按顺序放：套别.机构号 → 会话ID）', env, main:null, objects, arrays,
           /* 文档里写 Number / BigDecimal 的字段按数字发（dealer 在报文里就是 1074，不是 "1074"） */
           numHint:true,
-          /* V1.11.1：实测报文的外壳是三槽数组
-               data = [交易码, 套别/机构号, [ 事件JSON字符串 ]]
-             - pre      第 0 项：交易码，文档里没有，存环境（换环境改一处）
-             - take     第 1 项：从报文对象里摘出来按位置放的字段（cusNumber「套别.机构号」）
-             - strList  第 2 项：整个事件对象 JSON.stringify 后放进单元素数组（List<批量事件>）
-             老协议没有 take/strList，仍按 [首元素, 报文] 老口径走，不受影响。 */
-          shell:{pre:'D.959', take:['cusNumber'], strList:true, ver:2}};
+          /* V1.11.2：实测报文的外壳是三槽数组
+               data = [套别.机构号, 会话ID, [ 事件JSON字符串 ]]
+             - take     前几项都是「按位置放」的字段（顺序即槽位顺序），值取自报文根字段
+             - strList  最后一项：整个事件对象 JSON.stringify 后放进单元素数组（List<批量事件>）
+             三个槽没有常量：D.959 就是 cusNumber，33333 就是 sessionId，都在字段里改。
+             老协议没有 take/strList（ver<3），载入时由 pickModel 补齐。 */
+          shell:{take:['cusNumber','sessionId'], strList:true, ver:3}};
 }
 
 /* ========================= 报文协议库（V1.3.0） ========================= */
@@ -3786,11 +3952,12 @@ function pickModel(m){
                objects:Array.isArray(m.objects)?m.objects:[],
                tree:!!(m.tree||(Array.isArray(m.objects)&&m.objects.length))};
   if(m.shell){
-    /* V1.11.0 建的协议只有 {pre}：那是两槽旧口径，导出会少一项、少一层序列化 ⇒ 载入时按三槽补齐。
-       ver===2 的不动，避免每次载入都覆盖协议自己的配置。 */
+    /* 老协议（ver<3）是两槽 / 常量槽口径，导出会多一项或少一层 ⇒ 载入时统一按三槽补齐。
+       ver===3 的不动，避免每次载入都覆盖协议自己的配置。 */
     const sh=Object.assign({},m.shell);
-    if(sh.ver!==2){ sh.ver=2; sh.strList=true;
-      sh.take=Array.isArray(sh.take)?sh.take:['cusNumber']; }
+    if(sh.ver!==3){ sh.ver=3; sh.strList=true; sh.pre='';
+      sh.take=Array.isArray(sh.take)&&sh.take.length?sh.take.slice():['cusNumber','sessionId'];
+      if(sh.take.indexOf('sessionId')<0) sh.take.push('sessionId'); }
     model.shell=sh;
   }
   if(m.meta) model.meta=m.meta;
@@ -4406,6 +4573,7 @@ document.addEventListener('click',e=>{
     S.ex.push({k:k.trim(),v:'',on:true,at:'root'});renderExtra();sync();return}
   if(t.id==='btnParse'){doImport($('inTxt').value);return}
   if(t.id==='btnNewFromMsg'){newProtoFromMsg();return}
+  if(t.id==='btnCalib'){calibrateFromMsg();return}
   if(t.id==='btnNames'){openNmModal();return}
   /* ---- V1.7.0 接口调用 ---- */
   if(t.id==='btnToApi'){ toApi(); return }
