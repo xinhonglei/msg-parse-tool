@@ -228,6 +228,16 @@ ul.issues li.w{color:var(--warn)}
 /* ===== V1.7.1 通用确认框 ===== */
 #cfBody code{background:#f2f4f7;border-radius:3px;padding:0 4px;font-family:Consolas,monospace;font-size:12px}
 #cfBody .warn{display:block;margin-top:9px;color:#b45309;font-weight:600}
+/* V1.13.0：校准弹窗里的「字段保留清单」 */
+#cfBody .cfkeep{max-height:min(40vh,280px);overflow:auto;border:1px solid var(--line);
+ border-radius:6px;background:#fff;margin-top:6px;padding:3px 0}
+#cfBody .cfkeep label{display:flex;gap:7px;align-items:flex-start;padding:3px 9px;
+ font-size:12.5px;color:var(--txt2);cursor:pointer;line-height:1.6}
+#cfBody .cfkeep label:hover{background:#f5f8fc}
+#cfBody .cfkeep input{margin:3px 0 0;flex:0 0 auto}
+#cfBody .cfkeep .lbl{flex:1 1 auto;word-break:break-all}
+#cfBody .cfkeep .lbl b{color:var(--txt);font-weight:600}
+#cfBody .cfbar{display:flex;gap:6px;align-items:center;margin-top:7px;font-size:12px;color:var(--txt3)}
 /* ===== V1.6.0 补充字段名称弹窗 ===== */
 .mbox.namebox{width:860px}
 .namebox .mb{padding:12px 18px}
@@ -796,8 +806,16 @@ let SCALARS=[], MAP={}, TOPKEYS=[], ARRS={};
 const LS='rms_repo_msg_tool_v1';          // V1.2 旧 key，仅作迁移来源
 const LS_MODEL='rms_repo_msg_model_v1';   // V1.2 旧 key，仅作迁移来源
 const LS_PROTO='rms_repo_msg_protocols_v2';
-const TOOL_VERSION='1.12.0';
+const TOOL_VERSION='1.13.0';
 const CHANGELOG=[
+ {v:'1.13.0', d:'2026-11-24', items:[
+   '修「校准完名称列全空」：报文只能说明「有哪些键、什么值」，说不清字段叫什么、是否必填、备注写什么；现在同名字段的名称 / 必填 / 备注 / Java 类型 / 布尔口径都从旧协议搬回来，只有结构跟着报文走',
+   '修三段式粘贴：整段 serviceName= / data= / withEnv= 贴进报文框时，以前按 Key=Value 解析，这三行本身变成 3 个「额外字段」；现在先拆包只取 data 那一段，接口名与 withEnv 顺手回填到发送区（接口名框已有别的值就不覆盖）',
+   '三段式的 data 段支持跨多行：原来那条正则用行尾匹配，多行 JSON 会被截成第一行',
+   '三槽外壳 ["D.959","33333",["{…}"]] 现在也能直接贴进报文框导入取值（以前只跟数组第 0 项，第 0 项是字符串就报解析失败）',
+   '校准弹窗改成可选：协议里有、报文里没有的字段逐项列出，勾选 = 保留成「默认不发送」的字段（报文不传、服务端有默认值的就勾着），不勾 = 删掉；默认全保留，另有「全保留 / 全删除」一键',
+   '被保留的字段带备注「实际报文里没有这一项，默认不发送」，父级分组缺了会自动补出来',
+ ]},
  {v:'1.12.0', d:'2026-11-24', items:[
    '新增「≡ 按报文校准」：把真实报文粘进「报文」框 → 点它，就按这份报文校正当前协议的字段结构（键名、层级、多出来的数组列），确认前先列出「多出 N 项 / 协议多出 M 项 / 同名 K 项」',
    '校准只换结构：同名字段已填的值原样保留，接口名、data 外壳、数值口径都不变；要留旧结构可以先「重命名」复制一份',
@@ -1607,15 +1625,36 @@ function setDeep(obj,key,val){
 function doImport(txt){
   txt=(txt||'').trim();
   if(!txt) return msg('inMsg','err','内容为空');
+  /* V1.13.0：整段三段式是「信封」，不是报文里的字段。
+     以前这段文本会被当成 Key=Value 参数，serviceName / data / withEnv 三个键直接落进「额外字段」。
+     现在先把 data 段拆出来（可跨多行），接口名 / withEnv 顺手回填到发送区。 */
+  let pkgNote='';
+  const pkg=splitPkgText(txt);
+  if(pkg){
+    txt=String(pkg.data||'').trim();
+    if(!txt) return msg('inMsg','err','这段三段式里 data 是空的，没有可导入的报文。');
+    pkgNote=applyPkgToApi(pkg);
+  }
   const srcKV=looksLikeKV(txt);
-  let raw, chain=[], multi=0;
+  let raw, chain=[], multi=0, shellSeen=false;
   try{
     if(srcKV){ raw=parseKV(txt); }
     else{
-      const r=peel(parseLoose(txt));
-      raw=r.value; chain=r.chain;
-      const first=chain.find(c=>c.t==='arr');
-      if(first&&first.n>1) multi=first.n;   // 多条报文：只取第 1 条
+      /* 先走原来的剥壳（单槽数组 / 字符串外壳，导出时能原样还回去） */
+      let peeled=null;
+      try{ peeled=peel(parseLoose(txt)) }catch(e){}
+      if(peeled){
+        raw=peeled.value; chain=peeled.chain;
+        const first=chain.find(c=>c.t==='arr');
+        if(first&&first.n>1) multi=first.n;   // 多条报文：只取第 1 条
+      }else{
+        /* V1.13.0：三槽外壳 ["D.959","33333",["{…}"]] —— 第 0 项是字符串，
+           peel 只跟第 0 项会当场抛错，这里改用「往里找第一个对象」。
+           注意不设 outer：导出时外壳由协议的 data 外壳负责，不能套两层。 */
+        const d=deepestObject(parseLoose(txt));
+        if(!d) throw new Error('内容不是可解析的 JSON 文本');
+        raw=d; shellSeen=true;
+      }
     }
   }catch(e){
     return msg('inMsg','err','解析失败：'+(srcKV?'Key=Value 格式有误（应为 每行 key=value）':e.message));
@@ -1699,6 +1738,9 @@ function doImport(txt){
   let m='已导入：匹配文档字段 '+hit+' 项';
   if(ex) m+='，额外字段 '+ex+' 项（见左下「额外字段」）';
   m+='\n结构判定：'+(srcKV?'Key=Value 格式':(nested?'嵌套 tradeInfo':'扁平'));
+  if(pkg) m+='\n已按三段式拆包：只用 data 那一段（serviceName / withEnv 是信封，不是报文字段）'+
+    (pkgNote?'；'+pkgNote:'')+'。';
+  if(shellSeen) m+='\n已跳过 data 外壳（三槽数组），直接导入里面的 '+Object.keys(raw).slice(0,3).join(' / ')+' 等字段。';
   if(u.wrap) m+='；已识别网关外层包装（'+u.wrap.path.join('.')+'）';
   if(chain.length) m+='；已剥除外层：'+
     chain.map(c=>c.t==='arr'?('数组('+c.n+')'):'字符串').join(' → ')+
@@ -1753,6 +1795,56 @@ function buildModelFromPayload(payload){
   walk(payload||[], [], env);
   return {tree:true, envName:'报文根字段', env:env, main:null, objects:objects, arrays:arrays};
 }
+/* 拆 CCI 三段式信封：serviceName=… / data=… / withEnv=…
+   ★ V1.13.0：以前用一条正则取 data 段，`$` 在 m 模式下会匹配「行尾」，
+     多行 JSON 的 data 会被截成第一行；而且只有报文区走这条路，粘贴时仍按 Key=Value 解析，
+     serviceName / data / withEnv 三个键就变成「额外字段」露出来了。
+     这里改成逐行扫：遇到下一个键才换段，data 因此可以跨任意多行。
+   返回 null = 不是三段式（或 data 段看着不像报文），调用方照旧处理。 */
+function splitPkgText(txt){
+  const s=String(txt||'');
+  if(!/(^|\r?\n)[ \t]*(?:serviceName|data|withEnv)[ \t]*[=:]/i.test(s)) return null;
+  const buf={}, order=[];
+  const CANON={servicename:'serviceName', data:'data', withenv:'withEnv'};
+  let cur=null;
+  s.split(/\r?\n/).forEach(line=>{
+    const m=/^[ \t]*(serviceName|data|withEnv)[ \t]*[=:][ \t]*(.*)$/i.exec(line);
+    if(m){
+      const k=CANON[m[1].toLowerCase()]||m[1];
+      if(!buf[k]){ buf[k]=[]; order.push(k) }
+      cur=k; buf[k].push(m[2]); return;
+    }
+    if(cur) buf[cur].push(line);
+  });
+  const val=k=>buf[k]?buf[k].join('\n').trim():'';
+  const data=val('data');
+  /* data 段不像报文就不当信封拆（Key=Value 参数里碰巧有个 data 键，不能乱动） */
+  if(!data||!/^[[{"]/.test(data)) return null;
+  const we=val('withEnv').toLowerCase();
+  return {svc:val('serviceName').replace(/[\r\n]+/g,' ').trim(),
+          data:data,
+          withEnv:(we==='true'||we==='1')?true:(we==='false'||we==='0'?false:null),
+          order:order};
+}
+/* 把三段式里的接口名 / withEnv 回填到发送区（接口名框已有别的值就不覆盖） */
+function applyPkgToApi(pkg){
+  const notes=[];
+  if(!pkg) return '';
+  const el=$('apiSvcName');
+  if(el&&pkg.svc){
+    const had=String(el.value||'').trim();
+    if(!had){ el.value=pkg.svc; envPatch({svcName:pkg.svc}); notes.push('接口名已按这段日志填好') }
+    else if(had!==pkg.svc) notes.push('接口名框里已有别的值，没覆盖（日志里是 '+pkg.svc+'）');
+  }
+  const we=$('apiWithEnv');
+  if(we&&pkg.withEnv!=null){
+    const want=pkg.withEnv?'1':'0';
+    if(we.value!==want){ we.value=want; envPatch({withEnv:pkg.withEnv});
+      notes.push('withEnv 已设为 '+(pkg.withEnv?'true':'false')) }
+  }
+  if(typeof renderApiPkg==='function') renderApiPkg();
+  return notes.join('；');
+}
 /* 从文本框拿一份「报文对象」：支持三种贴法 ——
    ① 整段三段式（serviceName= / data= / withEnv=，直接把我发出去的那块日志贴进来即可）
    ② 只有 data 的那一截（["D.959","33333",["…"]]）
@@ -1761,10 +1853,8 @@ function buildModelFromPayload(payload){
    校准不剥，免得报文里本来就有个叫 data 的键被当包装剥掉。 */
 function payloadFromText(txt,stripWrap){
   let s=String(txt||'').trim();
-  if(/^\s*serviceName\s*=/m.test(s)){
-    const m=/^[ \t]*data[ \t]*=[ \t]*([\s\S]*?)(?=^[ \t]*(?:withEnv|serviceName)[ \t]*=|$)/m.exec(s);
-    if(m&&m[1].trim()) s=m[1].trim();
-  }
+  const pkg=splitPkgText(s);
+  if(pkg) s=pkg.data;
   if(looksLikeKV(s)) return unwrap(parseKV(s)).payload;
   /* 不能用 peel：它只跟数组的第 0 项，三槽外壳的第 0 项是「套别.机构号」字符串，会当场抛错 */
   const obj=deepestObject(parseLoose(s));
@@ -1828,6 +1918,120 @@ function diffShape(oldM,newM){
   const same=Object.keys(kb).filter(k=>ka[k]);
   return {add:add.map(k=>kb[k].label), drop:drop.map(k=>ka[k].label), same:same, addK:add, dropK:drop};
 }
+/* 旧协议按 key 建索引：数组列用「表.列」当键（列名在表内唯一，跨表会撞） */
+function metaIndexOf(m){
+  const out={};
+  ((m&&m.env)||[]).forEach(f=>{ if(f&&f.k) out[f.k]=f });
+  ((m&&m.objects)||[]).forEach(o=>(o.fields||[]).forEach(f=>{ if(f&&f.k) out[f.k]=f }));
+  ((m&&m.arrays)||[]).forEach(a=>(a.fields||[]).forEach(f=>{ if(f&&f.k) out[a.key+'.'+f.k]=f }));
+  return out;
+}
+/* V1.13.0：把旧协议里「同名键」的说明性信息搬回新结构。
+   ★ 报文只说得清「有哪些键、什么值」，说不清「这键叫什么名字 / 是不是必填 / 备注写什么」，
+     不搬的话校准完名称列就全变空 —— 以前就是这么丢的。结构（键、路径、层级）仍以报文为准。 */
+const META_KEYS=['n','r','note','t','dt','bool','len','enums','cond','condNote','v0','maxlen','fmt'];
+function mergeOldMeta(oldM,newM){
+  if(!oldM||!newM) return newM;
+  const old=metaIndexOf(oldM);
+  const take=(f,key)=>{
+    const o=old[key||f.k]; if(!o) return;
+    META_KEYS.forEach(p=>{
+      const v=o[p];
+      if(v===undefined||v===null||v==='') return;
+      f[p]=v;
+    });
+  };
+  (newM.env||[]).forEach(f=>take(f));
+  (newM.objects||[]).forEach(o=>{
+    const og=(oldM.objects||[]).find(x=>x.key===o.key);
+    if(og&&og.title) o.title=og.title;      /* 分组名也用文档里的中文名 */
+    (o.fields||[]).forEach(f=>take(f));
+  });
+  (newM.arrays||[]).forEach(a=>{
+    const oa=(oldM.arrays||[]).find(x=>x.key===a.key);
+    if(oa){
+      if(oa.title&&!/行$/.test(oa.title)) a.title=oa.title;
+      if(oa.note) a.note=oa.note;
+      if(oa.twoRows) a.twoRows=1;
+      if(oa.max) a.max=oa.max;
+    }
+    (a.fields||[]).forEach(f=>take(f,a.key+'.'+f.k));
+  });
+  return newM;
+}
+/* 报文里整段没出现的分组，也要能补出父节点链，否则保留的字段无处安放 */
+function ensureGroup(newM,oldG){
+  if(!Array.isArray(newM.objects)) newM.objects=[];
+  const path=(Array.isArray(oldG.path)?oldG.path:String(oldG.key||'').split('.')).slice();
+  let node=null;
+  for(let i=1;i<=path.length;i++){
+    const k=path.slice(0,i).join('.');
+    node=newM.objects.find(x=>x.key===k);
+    if(!node){
+      node={key:k, path:path.slice(0,i),
+            title:(i===path.length&&oldG.title)?oldG.title:path[i-1], fields:[]};
+      newM.objects.push(node);
+    }
+  }
+  return node;
+}
+/* V1.13.0：把用户选择「保留」的字段塞回新结构，标 off=1（默认不勾 = 不发送）。
+   典型场景：报文不传、但服务端有默认值的字段（approvalValidDate 这类），
+   以前校准会直接删掉，现在默认保留成「可选字段」，需要时勾上就能发。 */
+function restoreDroppedFields(oldM,newM,keys){
+  const keep={}; (keys||[]).forEach(k=>{keep[k]=1});
+  const mark=f=>{
+    const c=Object.assign({},f,{off:1,ckd:0});
+    c.note=(f.note?String(f.note).replace(/；$/,'')+'；':'')+'实际报文里没有这一项，默认不发送（服务端可能有默认值）';
+    return c;
+  };
+  let n=0;
+  (oldM.env||[]).forEach(f=>{
+    if(!keep[f.k]) return;
+    if((newM.env||[]).some(x=>x.k===f.k)) return;
+    newM.env.push(mark(f)); n++;
+  });
+  (oldM.objects||[]).forEach(o=>{
+    (o.fields||[]).forEach(f=>{
+      if(!keep[f.k]) return;
+      const g=ensureGroup(newM,o);
+      if(!g||(g.fields||[]).some(x=>x.k===f.k)) return;
+      g.fields.push(mark(f)); n++;
+    });
+  });
+  (oldM.arrays||[]).forEach(a=>{
+    const whole=!!keep[a.key+'[]'];
+    let tgt=(newM.arrays||[]).find(x=>x.key===a.key);
+    if(!tgt){
+      const anyCol=(a.fields||[]).some(f=>keep[a.key+'.'+f.k]);
+      if(!whole&&!anyCol) return;
+      tgt={key:a.key, path:(Array.isArray(a.path)?a.path.slice():String(a.key).split('.')),
+           title:a.title||a.key, fields:[], note:a.note||'',
+           max:a.max||null, twoRows:a.twoRows?1:0, on:false};
+      (newM.arrays||[]).push(tgt);
+    }
+    (a.fields||[]).forEach(f=>{
+      if(!keep[a.key+'.'+f.k]) return;
+      if((tgt.fields||[]).some(x=>x.k===f.k)) return;
+      tgt.fields.push(mark(f)); n++;
+    });
+    if(whole&&!(tgt.fields||[]).length){
+      tgt.fields=(a.fields||[]).map(mark); n+=tgt.fields.length;
+    }
+  });
+  return n;
+}
+/* 弹窗里的「全保留 / 全删除」 */
+function calibKeep(on){
+  document.querySelectorAll('#cfBody .keepck').forEach(el=>{ el.checked=!!on });
+  calibKeepCount();
+}
+function calibKeepCount(){
+  const c=$('cfKeepCnt'); if(!c) return;
+  const all=document.querySelectorAll('#cfBody .keepck').length;
+  const n=document.querySelectorAll('#cfBody .keepck:checked').length;
+  c.textContent='已勾选保留 '+n+' / '+all+' 项';
+}
 function calibrateFromMsg(){
   const txt=($('inTxt').value||'').trim();
   if(!txt) return msg('inMsg','err','请先把**真实报文**粘贴到上方文本框，再点「≡ 按报文校准」。');
@@ -1861,22 +2065,46 @@ function calibrateFromMsg(){
   }
   const li=(arr,n)=>arr.slice(0,n).map(x=>'<code>'+esc(x)+'</code>').join('、')+
     (arr.length>n?' 等 '+arr.length+' 项':'');
+  /* 「报文里没有」的每一项都做成可勾选项：默认全保留（不发送），
+     适合「报文不用发、服务端有默认值」的字段；不勾的才会从协议里删掉。 */
+  const mi=metaIndexOf(cur);
+  const keepRows=d.dropK.map((k,i)=>{
+    const f=mi[k]||{}, nm=String(f.n||'').trim(), lab=d.drop[i]||k;
+    return '<label><input type="checkbox" class="keepck" data-k="'+esc(k)+'" checked>'+
+      '<span class="lbl">'+(nm?'<b>'+esc(nm)+'</b> ':'')+
+      '<code>'+esc(lab)+'</code></span></label>';
+  }).join('');
   confirmBox({
     title:'按这份报文校准当前协议？',
     ok:'覆盖结构',
-    html:'只换<b>字段结构</b>，同名字段已填的值保留；接口名、data 外壳、数值口径不变。'+
+    html:'只换<b>字段结构</b>：同名字段的名称 / 必填 / 已填值都保留；接口名、data 外壳、数值口径不变。'+
       '<div style="margin-top:8px">'+
-      '<div>报文里多出 <b>'+d.add.length+'</b> 项：'+(d.add.length?li(d.add,8):'<span class="dim">无</span>')+'</div>'+
-      '<div>协议里有、报文里没有 <b>'+d.drop.length+'</b> 项（会从协议里去掉）：'+
-        (d.drop.length?li(d.drop,8):'<span class="dim">无</span>')+'</div>'+
-      '<div>同名保留 <b>'+d.same.length+'</b> 项（值不丢）</div>'+
+      '<div>报文里多出 <b>'+d.add.length+'</b> 项（会加进协议）：'+
+        (d.add.length?li(d.add,8):'<span class="dim">无</span>')+'</div>'+
       '</div>'+
-      '<div class="dim" style="margin-top:8px">要保留旧结构请先「重命名」复制一份协议再校准。</div>',
+      (d.drop.length
+        ? '<div style="margin-top:9px">协议里有、报文里没有 <b>'+d.drop.length+'</b> 项。'+
+          '勾选 = 保留成「默认不发送」的字段（报文不传、服务端有默认值的就勾着），不勾 = 从协议里删掉：</div>'+
+          '<div class="cfkeep">'+keepRows+'</div>'+
+          '<div class="cfbar">'+
+          '<button type="button" class="sm" onclick="calibKeep(true)">全保留</button>'+
+          '<button type="button" class="sm" onclick="calibKeep(false)">全删除</button>'+
+          '<span id="cfKeepCnt"></span></div>'
+        : '<div style="margin-top:8px">协议里没有比报文多出来的字段。</div>')+
+      '<div style="margin-top:8px">同名字段 <b>'+d.same.length+'</b> 项：名称、必填、备注、已填的值全部保留。</div>'+
+      '<div class="dim" style="margin-top:8px">要留住整份旧结构，请先「重命名」复制一份协议再校准。</div>',
     onOk:()=>{
+      const keep=[];
+      document.querySelectorAll('#cfBody .keepck').forEach(el=>{ if(el.checked) keep.push(el.dataset.k) });
+      mergeOldMeta(cur,newM);
+      const kept=restoreDroppedFields(cur,newM,keep);
       applyModelToCurrent(newM);
-      msg('inMsg','ok','已按报文校准：+'+d.add.length+' / -'+d.drop.length+' 项，同名 '+d.same.length+' 项的值已保留。');
+      msg('inMsg','ok','已按报文校准：新增 '+d.add.length+' 项 · 去掉 '+(d.drop.length-kept)+' 项 · '+
+        '保留 '+kept+' 项未发送字段（名称与备注都在，默认不勾）· 同名 '+d.same.length+
+        ' 项的名称 / 必填 / 已填值已保留。');
     }
   });
+  if(d.drop.length) calibKeepCount();
 }
 
 /* ========================= 补充字段名称（V1.6.0） =========================
@@ -4654,6 +4882,17 @@ function copyOut(){
     document.body.removeChild(ta)}
 }
 $('inTxt').addEventListener('paste',()=>setTimeout(()=>doImport($('inTxt').value),0));
+/* V1.13.0：参数框里贴整段三段式 → 自动拆成「接口名 / data / withEnv」三处，
+   否则三行会整段当成 data 再拼一次，服务端 data 里套 serviceName 必报参数异常 */
+$('apiParams').addEventListener('paste',()=>setTimeout(()=>{
+  const ta=$('apiParams'); if(!ta) return;
+  const pkg=splitPkgText(ta.value); if(!pkg) return;
+  ta.value=pkg.data;
+  const note=applyPkgToApi(pkg);
+  if(typeof updateApiParamChip==='function') updateApiParamChip();
+  renderApiPkg();
+  apiStat('ok','已拆开粘贴的三段式：data 留在参数框'+(note?'；'+esc(note):''));
+},0));
 document.addEventListener('keydown',e=>{
   const modalOpen=$('impMask').classList.contains('open');
   const rstOpen=$('rstMask').classList.contains('open');
