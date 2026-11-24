@@ -480,8 +480,8 @@ select:disabled{background:#f3f4f6;color:var(--txt3);cursor:not-allowed}
           <div class="fld"><label>登录密码</label><input type="password" id="envPass" placeholder="登录密码"></div>
         </div>
         <div class="fld" id="envDataHeadBox" style="margin-top:10px;display:none">
-          <label>data 首元素（外层数组第 0 项，留空＝不套）</label>
-          <input type="text" id="envDataHead" placeholder="例如 D.762 —— 导出的 data 会变成 [&quot;D.762&quot;, {…}]">
+          <label>data 首元素（外层数组第 0 项＝交易码，留空＝不套外壳）</label>
+          <input type="text" id="envDataHead" placeholder="例如 D.959 —— 导出的 data 是 [&quot;D.959&quot;, &quot;机构号&quot;, [&quot;{…}&quot;]]">
         </div>
         <div class="apibar2">
           <div class="fld grow" style="max-width:360px"><label>接口类型（决定服务与方法下拉）</label>
@@ -795,8 +795,15 @@ let SCALARS=[], MAP={}, TOPKEYS=[], ARRS={};
 const LS='rms_repo_msg_tool_v1';          // V1.2 旧 key，仅作迁移来源
 const LS_MODEL='rms_repo_msg_model_v1';   // V1.2 旧 key，仅作迁移来源
 const LS_PROTO='rms_repo_msg_protocols_v2';
-const TOOL_VERSION='1.11.0';
+const TOOL_VERSION='1.11.1';
 const CHANGELOG=[
+ {v:'1.11.1', d:'2026-11-24', items:[
+   'data 外壳改成实测的三槽结构：原来是 ["D.762", 报文对象]，实际报文是 ["D.959", "33333", ["{\\"tradeInfo\\":…}"]]，两槽发出去服务端一定报参数异常',
+   '第 1 项不是对象里的键而是按位置放的参数（cusNumber「套别.机构号」）：导出时从报文对象里摘出来放到数组第 1 项，对象里不再留这个键',
+   '第 2 项是 List<批量事件>：整个事件对象先 JSON.stringify 成字符串，再装进单元素数组 —— 少这一层序列化服务端解不出对象',
+   '「data 首元素」这一格改叫交易码（默认 D.959），仍存环境；留空 = 不套外壳，方便临时发裸报文',
+   '协议、状态与老版本兼容：没有 take / strList 的老协议仍按 [首元素, 报文] 老口径导出',
+ ]},
  {v:'1.11.0', d:'2026-11-24', items:[
    '按文档的二级标题切接口：一份需求文档里有几个接口就建几份协议，不再靠表标题去猜边界（2.2 / 2.3 不会再被并成一组，协议名直接取章节标题）',
    '新增「元数据表」识别：表里写着「通用接口 / 功能方法」的那种两列表，不再被当成字段建出两个假字段；「功能方法」那串自动填进接口名（serviceName），withEnv 默认「否」',
@@ -1270,13 +1277,34 @@ function buildPayload(){
     }
     if(S.outer&&S.outer.length) payload=rewrap(payload,S.outer);  // 逆序套回数组 / 字符串外壳
   }
-  /* V1.11.0：data 外壳 —— 报文外面再套一层数组，第 0 项是环境里配的常量（实测报文是 "D.762"）。
-     值跟着环境走：换环境改「data 首元素」即可，不用改协议。空串 = 不套。 */
+  /* V1.11.1：data 外壳 —— 实测报文是三槽数组 [交易码, 套别/机构号, [事件JSON字符串]]。
+     第 0 项跟着环境走：换环境改「data 首元素」即可，不用改协议。空串 = 不套。 */
   if(MODEL.shell&&S.shellOn!==false){
-    const h=shellHead();
-    if(h!=='') payload=[h,payload];
+    payload=applyShell(payload);
   }
   return payload;
+}
+/* 外壳拼装：把 cusNumber 这类「按位置放」的字段从对象里摘出来，事件对象再序列化成字符串。
+   返回 [pre, …take, [JSON字符串]]；老协议没有 take/strList 时退回 [pre, 报文]。 */
+function applyShell(payload){
+  const sh=MODEL.shell||{};
+  const h=shellHead();
+  if(h==='') return payload;                       /* 留空 = 不套外壳，方便临时发裸报文 */
+  const p=(payload&&typeof payload==='object'&&!Array.isArray(payload))?payload:null;
+  const out=[h];
+  (sh.take||[]).forEach(k=>{
+    let v=null;
+    if(p&&Object.prototype.hasOwnProperty.call(p,k)){ v=p[k]; delete p[k]; }
+    else if(S.v&&S.v[k]!=null) v=S.v[k];           /* 没勾选也要占位：位置参数不能少一项 */
+    out.push(v==null?'':v);
+  });
+  if(sh.strList){
+    /* List<批量事件> 里装的是字符串，不是对象 —— 少这一层 stringify 服务端就报参数异常 */
+    out.push([JSON.stringify(p)]);
+  }else{
+    out.push(p);
+  }
+  return out;
 }
 /* 外壳首元素：环境里显式配了就用环境的（空串表示不套），没配过才退协议的默认值 */
 function shellHead(){
@@ -3501,7 +3529,13 @@ function buildIfaceModel(sec){
           envName:'报文根字段（data 第一层）', env, main:null, objects, arrays,
           /* 文档里写 Number / BigDecimal 的字段按数字发（dealer 在报文里就是 1074，不是 "1074"） */
           numHint:true,
-          shell:{pre:'D.762'}};
+          /* V1.11.1：实测报文的外壳是三槽数组
+               data = [交易码, 套别/机构号, [ 事件JSON字符串 ]]
+             - pre      第 0 项：交易码，文档里没有，存环境（换环境改一处）
+             - take     第 1 项：从报文对象里摘出来按位置放的字段（cusNumber「套别.机构号」）
+             - strList  第 2 项：整个事件对象 JSON.stringify 后放进单元素数组（List<批量事件>）
+             老协议没有 take/strList，仍按 [首元素, 报文] 老口径走，不受影响。 */
+          shell:{pre:'D.959', take:['cusNumber'], strList:true, ver:2}};
 }
 
 /* ========================= 报文协议库（V1.3.0） ========================= */
@@ -3751,7 +3785,14 @@ function pickModel(m){
                main:m.main||null, arrays:Array.isArray(m.arrays)?m.arrays:[],
                objects:Array.isArray(m.objects)?m.objects:[],
                tree:!!(m.tree||(Array.isArray(m.objects)&&m.objects.length))};
-  if(m.shell) model.shell=m.shell;
+  if(m.shell){
+    /* V1.11.0 建的协议只有 {pre}：那是两槽旧口径，导出会少一项、少一层序列化 ⇒ 载入时按三槽补齐。
+       ver===2 的不动，避免每次载入都覆盖协议自己的配置。 */
+    const sh=Object.assign({},m.shell);
+    if(sh.ver!==2){ sh.ver=2; sh.strList=true;
+      sh.take=Array.isArray(sh.take)?sh.take:['cusNumber']; }
+    model.shell=sh;
+  }
   if(m.meta) model.meta=m.meta;
   if(m.iface) model.iface=m.iface;
   if(m.numHint) model.numHint=true;
