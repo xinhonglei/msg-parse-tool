@@ -133,12 +133,57 @@ for /d /r "%~1" %%d in (*) do (
 )
 exit /b 0
 
-rem ---------- 子过程：在指定目录里挑版本号最高的 html ----------
+rem ---------- 子过程：在指定目录里挑版本号最高的 html ----------rem ---------- 子过程：在指定目录里挑版本号最高的 html ----------
+rem 注意：不能靠 dir /o-n 排，它是按文件名字符串倒序，V1.9 会排在 V1.10 前面。
+rem 这里把 V1.10 换算成整数再比大小，V1.11 / V2.0 / V1.10.1 都不会选错。
 :pick
 set "P=%~1"
-if not "%P%"=="" if not exist "%P%\" set "P=%P%\"
-for /f "delims=" %%f in ('dir /b /o-n /a-d "%P%报文解析生成工具V*.html" 2^>nul') do (
-  if not defined SRC set "SRC=%P%%%f"
+if not "%P%"=="" set "PTAIL=%P:~-1%"
+if not "%P%"=="" if not "%PTAIL%"=="\" set "P=%P%\"
+set "BESTVN=0"
+set "BESTF="
+for /f "delims=" %%f in ('dir /b /a-d "%P%报文解析生成工具V*.html" 2^>nul') do (
+  call :vernum "%%f"
+  call :keepbest "%%f"
+)
+if defined BESTF set "SRC=%P%%BESTF%"
+exit /b 0
+
+rem ---------- 子过程：把文件名里的版本号换算成整数（V1.10 -^> 1000101000） ----------
+:vernum
+set "VN=0"
+set "VFN=%~1"
+set "VT=%VFN:*V=%"
+set "VT=%VT:.html=%"
+set "VT=%VT:.htm=%"
+if not defined VT exit /b 0
+set "VM="
+set "V2="
+set "V3="
+for /f "tokens=1,2,3 delims=." %%a in ("%VT%") do (
+  set "VM=%%a"
+  set "V2=%%b"
+  set "V3=%%c"
+)
+if not defined VM exit /b 0
+if not defined V2 set "V2=0"
+if not defined V3 set "V3=0"
+set "VM=0000%VM%"
+set "VM=%VM:~-4%"
+set "V2=000%V2%"
+set "V2=%V2:~-3%"
+set "V3=00%V3%"
+set "V3=%V3:~-2%"
+set /a "VN=1%VM%%V2%%V3%" 2>nul
+if not defined VN set "VN=0"
+exit /b 0
+
+rem ---------- 子过程：比当前最优更大就记下 ----------
+:keepbest
+if not defined VN exit /b 0
+if %VN% gtr %BESTVN% (
+  set "BESTVN=%VN%"
+  set "BESTF=%~1"
 )
 exit /b 0
 
