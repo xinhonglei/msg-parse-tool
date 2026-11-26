@@ -122,6 +122,30 @@ input[type=checkbox]{width:15px;height:15px;accent-color:var(--pri);cursor:point
 .ascroll{overflow-x:auto}
 .atbl th.off,.atbl td.off{opacity:.35;background:#f7f8fa}
 
+/* V1.16.0：数组竖式表格（一个字段一行，多记录用「第 N 行」标签切换） */
+.avbar{display:flex;align-items:center;gap:6px;padding:6px 8px;border-bottom:1px solid var(--line2);
+ background:#fafbfc;flex-wrap:wrap}
+.avtabs{display:inline-flex;gap:4px;flex-wrap:wrap}
+.avtabs button{padding:2px 9px;font-size:12px;border-radius:5px}
+.avtabs button.on{background:var(--pri);border-color:var(--pri);color:#fff}
+.avq{font-size:12px;padding:3px 8px;width:168px;margin-left:auto}
+.avtbl{width:100%}
+.avrow{display:grid;grid-template-columns:22px minmax(140px,1.1fr) minmax(84px,1fr) 62px minmax(130px,1.25fr);
+ gap:8px;align-items:center;padding:3px 8px;border-bottom:1px solid var(--line2);font-size:12px}
+.avrow:hover{background:#fafbfc}
+.avrow.avhead{background:#fafbfc;color:var(--txt2);font-size:11.5px;font-weight:600;
+ position:sticky;top:0;z-index:1}
+.avrow.hidden{display:none}
+.avrow.off{opacity:.38;background:#f7f8fa}
+.avrow .k{font-family:Consolas,monospace;font-size:11.5px;color:var(--txt);word-break:break-all}
+.avrow .ty{font-size:11.5px;color:var(--txt3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.avrow .nn .nnn{cursor:text;border-bottom:1px dashed transparent;border-radius:2px;padding:0 1px;color:var(--txt2)}
+.avrow .nn .nnn:hover{border-bottom-color:var(--txt3);background:#eef2f8}
+.avrow .nn .nnn.empty{color:var(--txt3);opacity:.8}
+.avrow input.av{font-size:12px;padding:3px 6px;width:100%}
+.avfoot{display:flex;align-items:center;gap:8px;padding:6px 8px;font-size:11.5px;color:var(--txt3);
+ border-top:1px solid var(--line2);background:#fcfcfd}
+
 .out{font-family:Consolas,monospace;font-size:12px;white-space:pre;overflow:auto;
  max-height:340px;background:#fbfcfd;border:1px solid var(--line);border-radius:6px;padding:9px;
  margin:0}
@@ -929,8 +953,15 @@ let SCALARS=[], MAP={}, TOPKEYS=[], ARRS={};
 const LS='rms_repo_msg_tool_v1';          // V1.2 旧 key，仅作迁移来源
 const LS_MODEL='rms_repo_msg_model_v1';   // V1.2 旧 key，仅作迁移来源
 const LS_PROTO='rms_repo_msg_protocols_v2';
-const TOOL_VERSION='1.15.0';
+const TOOL_VERSION='1.16.0';
 const CHANGELOG=[
+ {v:'1.16.0', d:'2026-11-26', items:[
+   '数组卡片改成竖式：一个字段一行（勾选 / 字段 / 名称 / 类型 / 值），再也不用左右拖动；字段多的表（tradeDataList 48 个键）也能一眼看全',
+   '数组有多条记录时，顶部出「第 1 行 / 第 2 行 / ＋」标签，一次看一条、点标签就切，卡片高度固定不会越拉越长；「＋」新建行后自动切到新行',
+   '卡片右上新增「竖式 / 横式」切换：想并排对比字段时可以切回原来的横表，选择跟协议一起存盘',
+   '竖式表格头部新增字段搜索框，按英文 key 或中文名称过滤，只影响显示、不影响报文内容',
+   '修：横表每行末尾的「删」按钮点了会报错（属性里拼进了 [object Object]，拿不到数组名），删不掉行；横式与竖式的删行现在都正常，竖式底部还有「删本行」',
+ ]},
  {v:'1.15.0', d:'2026-11-26', items:[
    '粘贴报文不再自动导入：以前一 Ctrl+V 就把当前协议已填的值清空重填，连「＋建为协议」都救不回来（清空发生在弹窗之前），磁盘备份也被清空后的状态覆盖 —— 现在粘贴只把文本放进去，下面出现一根动作条让你选「导入当前协议 / ＋建为协议 / 按报文校准 / 只看不改」',
    '导入只覆盖报文里真的带了的字段：报文没有的字段保留你原来的值，手动改过的额外字段也保留；「数值输出为数字」只开不关',
@@ -1607,6 +1638,8 @@ function renderGroups(){
         '<span class="t">'+esc(a.title||'')+'</span>'+
         '<span class="d">'+esc(note)+'</span>'+
         '<span class="spacer"></span>'+
+        '<button class="sm" data-alay="'+esc(a.key)+'" title="竖式：一个字段一行；横式：一个字段一列">'+
+          ((S.arr[a.key]&&S.arr[a.key].lay==='h')?'横式':'竖式')+'</button>'+
         '<button class="sm" data-arow="'+esc(a.key)+'">+ 加一行</button>'+
       '</div>'+
       '<div class="bd ascroll" id="'+cfg.bd+'"></div>'+
@@ -1616,10 +1649,48 @@ function renderGroups(){
   MODEL.arrays.forEach(a=>renderArr(a.key));
   filter();
 }
-function renderArr(a){
-  const k=typeof a==='string'?a:(a&&a.key); if(!k) return;
-  const cfg=ARRS[k],st=S.arr[k];
-  if(!cfg||!cfg.fields||!st) return; // 防御：跳过未构建/缺字段的数组条目
+/* V1.16.0：数组卡片两种摆法。lay='v' 竖式（默认，一个字段一行，多记录用标签切换）；
+   lay='h' 横式（老样子，一个字段一列）。两种摆法共用 S.arr[k].cols / rows，导出链路不受影响。 */
+function arrCur(k){
+  const st=S.arr[k], n=st.rows.length;
+  let i=parseInt(st.cur,10); if(!(i>=0)) i=0;
+  if(i>=n) i=n?n-1:0;
+  st.cur=i; return i;
+}
+function arrTableV(k,cfg,st){
+  const n=st.rows.length, cur=arrCur(k);
+  let h='<div class="avbar"><div class="avtabs">';
+  for(let i=0;i<n;i++)
+    h+='<button class="'+(i===cur?'on':'')+'" data-acur="'+esc(k)+'" data-i="'+i+'">第 '+(i+1)+' 行</button>';
+  h+='<button data-arow="'+esc(k)+'" title="再加一条记录">＋</button></div>'+
+     '<input type="text" class="avq" data-a="'+esc(k)+'" placeholder="搜索字段 / 名称"'+
+     ' value="'+esc(st.q||'')+'"></div>';
+  if(!n) return h+'<div style="padding:10px 12px;color:var(--txt3)">暂无记录，点上方「＋」或右上「加一行」新建一条。</div>';
+  const r=st.rows[cur]||{};
+  let onCnt=0;
+  cfg.fields.forEach(f=>{if(st.cols[f.k])onCnt++});
+  h+='<div class="avtbl"><div class="avrow avhead"><span></span><span>字段</span>'+
+     '<span>名称</span><span>类型</span><span>值</span></div>';
+  cfg.fields.forEach(f=>{
+    const on=!!st.cols[f.k];
+    const search=(f.k+' '+(f.n||'')).toLowerCase();
+    h+='<div class="avrow'+(on?'':' off')+'" data-search="'+esc(search)+'">'+
+      '<label class="opt"><input type="checkbox" class="acol" data-a="'+esc(k)+'" data-k="'+esc(f.k)+'"'+
+        (on?' checked':'')+'></label>'+
+      '<span class="k">'+esc(f.k)+'</span>'+
+      '<span class="nn"><span class="nnn'+(f.n?'':' empty')+'" data-a="'+esc(k)+'" data-k="'+esc(f.k)+
+        '" title="点这里改名称">'+esc(f.n||'填名称')+'</span></span>'+
+      '<span class="ty" title="'+esc(f.t||'')+'">'+esc(f.t||'')+'</span>'+
+      '<input type="text" class="av" data-a="'+esc(k)+'" data-i="'+cur+'" data-k="'+esc(f.k)+'" value="'+
+        esc(r[f.k]==null?'':r[f.k])+'">'+
+      '</div>';
+  });
+  h+='</div><div class="avfoot"><span>第 '+(cur+1)+' 行 / 共 '+n+' 行 · 字段 '+cfg.fields.length+
+     ' 个，已勾 '+onCnt+' 个</span>'+
+     '<button class="sm adel" data-a="'+esc(k)+'" data-i="'+cur+'" style="margin-left:auto">删本行</button></div>';
+  return h;
+}
+function arrTableH(k,cfg,st){
   let h='<table class="atbl"><thead><tr><th class="idx"></th>';
   cfg.fields.forEach(f=>{
     h+='<th class="'+(st.cols[f.k]?'':'off')+'" title="'+esc(f.note||'')+'">'+
@@ -1634,12 +1705,27 @@ function renderArr(a){
     cfg.fields.forEach(f=>{h+='<td class="'+(st.cols[f.k]?'':'off')+'">'+
       '<input type="text" class="av" data-a="'+k+'" data-i="'+i+'" data-k="'+f.k+'" value="'+
       esc(r[f.k]==null?'':r[f.k])+'"></td>'});
-    h+='<td><button class="sm adel" data-a="'+a+'" data-i="'+i+'">删</button></td></tr>';
+    h+='<td><button class="sm adel" data-a="'+esc(k)+'" data-i="'+i+'">删</button></td></tr>';
   });
   if(!st.rows.length) h+='<tr><td colspan="'+(cfg.fields.length+2)+
     '" style="color:var(--txt3);padding:10px">暂无行，点右上「加一行」</td></tr>';
-  h+='</tbody></table>';
-  $(cfg.bd).innerHTML=h;
+  return h+'</tbody></table>';
+}
+function renderArr(a){
+  const k=typeof a==='string'?a:(a&&a.key); if(!k) return;
+  const cfg=ARRS[k],st=S.arr[k];
+  if(!cfg||!cfg.fields||!st) return; // 防御：跳过未构建/缺字段的数组条目
+  if(st.lay!=='h'&&st.lay!=='v') st.lay='v';
+  $(cfg.bd).innerHTML=(st.lay==='h')?arrTableH(k,cfg,st):arrTableV(k,cfg,st);
+  if(st.lay!=='h'){
+    const q=String(st.q||'').trim().toLowerCase();
+    if(q){
+      const bd=$(cfg.bd);
+      if(bd) bd.querySelectorAll('.avrow[data-search]').forEach(r=>{
+        if(r.dataset.search.indexOf(q)<0) r.classList.add('hidden')
+      });
+    }
+  }
   $(cfg.ck).checked=st.on;
 }
 function renderExtra(){
@@ -5437,6 +5523,15 @@ document.addEventListener('input',e=>{
     if(t.value&&!S.ck[t.dataset.k]){S.ck[t.dataset.k]=true;
       const c=document.querySelector('.ck[data-k="'+t.dataset.k+'"]');if(c)c.checked=true}
     sync();return}
+  if(t.classList.contains('avq')){        /* V1.16.0：竖式字段搜索，只过滤显示、不重绘（否则打断光标） */
+    const a=t.dataset.a, st=S.arr[a]; if(!st) return;
+    st.q=t.value;
+    const q=t.value.trim().toLowerCase(), bd=$(ARRS[a].bd);
+    if(bd) bd.querySelectorAll('.avrow[data-search]').forEach(r=>{
+      r.classList.toggle('hidden',!!q&&r.dataset.search.indexOf(q)<0);
+    });
+    return;
+  }
   if(t.classList.contains('av')){S.arr[t.dataset.a].rows[+t.dataset.i][t.dataset.k]=t.value;
     sync();return}
   if(t.classList.contains('exv')){
@@ -5618,7 +5713,16 @@ document.addEventListener('click',e=>{
     renderAll();return;
   }
   if(t.dataset.arow){const a=t.dataset.arow;S.arr[a].rows.push(mkRow(a));S.arr[a].on=true;
+    S.arr[a].cur=S.arr[a].rows.length-1;                  /* V1.16.0：新建后直接切到这一行 */
     renderArr(a);sync();return}
+  if(t.dataset.acur!=null&&t.dataset.acur!==''){           /* V1.16.0：切到第 N 行 */
+    const a=t.dataset.acur; S.arr[a].cur=+t.dataset.i; renderArr(a); return}
+  if(t.dataset.alay){                                      /* V1.16.0：竖式 / 横式切换 */
+    const a=t.dataset.alay, st=S.arr[a];
+    st.lay=(st.lay==='h')?'v':'h';
+    renderArr(a);
+    t.textContent=(st.lay==='h')?'横式':'竖式';
+    sync(); return}
   if(t.classList.contains('adel')){const a=t.dataset.a;S.arr[a].rows.splice(+t.dataset.i,1);
     renderArr(a);sync();return}
   if(t.classList.contains('exdel')){S.ex.splice(+t.dataset.i,1);renderExtra();sync();return}
