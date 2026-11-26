@@ -902,8 +902,15 @@ let SCALARS=[], MAP={}, TOPKEYS=[], ARRS={};
 const LS='rms_repo_msg_tool_v1';          // V1.2 旧 key，仅作迁移来源
 const LS_MODEL='rms_repo_msg_model_v1';   // V1.2 旧 key，仅作迁移来源
 const LS_PROTO='rms_repo_msg_protocols_v2';
-const TOOL_VERSION='1.14.0';
+const TOOL_VERSION='1.14.1';
 const CHANGELOG=[
+ {v:'1.14.1', d:'2026-11-26', items:[
+   '修：报文里「数组装 JSON 字符串」的字段（如 tradeDataList:["{\\"…\\"}"]）以前整串当成一个 String 字段，里面几十个字段一个都没解析出来；现在按报文结构展开成表格，逐字段填写',
+   '这种表格导出时会自动把每行 stringify 回字符串，发出的报文与粘进来的一模一样（不会从 ["{…}"] 变成 [{…}]）',
+   '嵌套的对象 / 数组（confirmData、tradeSiList、tradeHeaderVO 这类）留在表格里作为一列，按 JSON 原样导出，不再撑成上百列',
+   '按报文校准时，旧协议里那个「一整串字符串」的同名字段会被识别成「升级成表格」，不会同时留一份标量字段和一份表格',
+   '粘贴不含 JSON 字符串的普通数组（["a","b"] 或 [{…}]）行为不变，老协议照旧',
+ ]},
  {v:'1.14.0', d:'2026-11-26', items:[
    '字段表现在能改结构了：点键名旁的铅笔（或双击键名）打开「字段设置」，可改键名、名称、Java 类型、必填、所在位置、组内顺序、备注',
    '改键名会连着把已填的值、勾选、类型覆盖、子路径一起搬过去，data 三槽外壳的取用也跟着换名 —— 不会再出现「名字改了、值没了」或「外壳发 undefined」',
@@ -1090,7 +1097,7 @@ function recompute(){
   MODEL.arrays.forEach(a=>{
     if(!a||!a.fields) return; // 防御：跳过畸形条目
     ARRS[a.key]={label:a.key, fields:a.fields, ck:'ck_'+a.key, bd:'bd_'+a.key,
-                 max:a.max||null, twoRows:!!a.twoRows,
+                 max:a.max||null, twoRows:!!a.twoRows, strItems:!!a.strItems,
                  path:Array.isArray(a.path)?a.path:String(a.key).split('.')};
   });
 }
@@ -1594,9 +1601,11 @@ function buildTreePayload(){
   });
   for(const a in ARRS){
     const st=S.arr[a]; if(!st||!st.on) continue;
+    /* V1.14.1：元素是 JSON 字符串的数组，导出时要把每行 stringify 回字符串，否则报文形态变了 */
+    const asStr=!!(ARRS[a]&&ARRS[a].strItems);
     const rows=st.rows.map(r=>{const o={};ARRS[a].fields.forEach(f=>{
       if(st.cols[f.k]) o[f.k]=fieldOut(f,r[f.k]);
-    });return o});
+    });return asStr?JSON.stringify(o):o});
     put(ARRS[a].path||String(a).split('.'),rows);
   }
   S.ex.forEach(e=>{ if(!e.on) return;
@@ -1615,8 +1624,9 @@ function buildPayload(){
   if(MODEL.main && MODEL.main.fields) MODEL.main.fields.forEach(f=>{if(S.ck[f.k])trade[f.k]=cv(f,f.k,S.v[f.k])});
   const arrOut={};
   for(const a in ARRS){const st=S.arr[a];if(!st.on)continue;
+    const asStr=!!(ARRS[a]&&ARRS[a].strItems);
     arrOut[a]=st.rows.map(r=>{const o={};ARRS[a].fields.forEach(f=>{
-      if(st.cols[f.k])o[f.k]=cv(f,f.k,r[f.k])});return o});}
+      if(st.cols[f.k])o[f.k]=cv(f,f.k,r[f.k])});return asStr?JSON.stringify(o):o});}
   S.ex.forEach(e=>{if(!e.on)return;
     const tgt=(e.at==='tradeInfo'&&S.mode==='nested')?trade:(S.mode==='nested'?root:trade);
     tgt[e.k]=exOut(e);});
@@ -2018,7 +2028,7 @@ function doImport(txt){
   for(const a in ARRS){S.arr[a].on=false;S.arr[a].rows=[]}
   S.ex=[];
 
-  let hit=0,ex=0,numSeen=0;
+  let hit=0,ex=0,numSeen=0,strArrHit=0;
   /* 树形协议按点分路径匹配（tradeInfo.dealer）；旧协议仍按字段名匹配，互不影响 */
   const hasUnder = pre => SCALARS.some(f=>String(f.k).startsWith(pre+'.')) ||
                           Object.keys(ARRS).some(k=>k.startsWith(pre+'.'));
@@ -2037,7 +2047,17 @@ function doImport(txt){
         const cfg=ARRS[arrKey], st=S.arr[arrKey];
         st.on=true; st.rows=[];
         cfg.fields.forEach(f=>st.cols[f.k]=false);
-        (Array.isArray(v)?v:[v]).forEach(o=>{
+        /* V1.14.1：元素是 JSON 字符串（["{\"a\":1}"]）时先解析成对象再填行；
+           顺便把协议上的 strItems 标记按报文实际情况纠正，否则导出会变成 [{…}] 而不是 ["{…}"] */
+        const meta=(MODEL.arrays||[]).find(x=>x&&x.key===arrKey);
+        (Array.isArray(v)?v:[v]).forEach(src=>{
+          let o=src;
+          if(typeof src==='string'&&/^\s*\{/.test(src)){
+            try{
+              const pv=parseLoose(src);
+              if(pv&&typeof pv==='object'&&!Array.isArray(pv)){ o=pv; if(meta) meta.strItems=1; cfg.strItems=true }
+            }catch(e){}
+          }
           const row=mkRow(arrKey);
           if(o&&typeof o==='object'&&!Array.isArray(o)) for(const kk in o){
             const of_=cfg.fields.find(f=>f.k===kk);
@@ -2055,6 +2075,7 @@ function doImport(txt){
         });
         if(!st.rows.length) st.rows=[mkRow(arrKey)];
         if(!cfg.fields.some(f=>st.cols[f.k])) cfg.fields.forEach(f=>st.cols[f.k]=true);
+        if(cfg.strItems) strArrHit++;
         hit++;continue;
       }
       const mf = MAP[full] || (!isTree()?MAP[k]:null);
@@ -2090,6 +2111,7 @@ function doImport(txt){
     '\n导出时勾选「带回原始外层」可按原形态还原。';
   if(multi) m+='\n注意：粘贴内容含 '+multi+' 条报文，已导入第 1 条。';
   if(numSeen) m+='\n检测到 '+numSeen+' 个数值型（不带引号）字段，已自动开启「数值输出为数字」';
+  if(strArrHit) m+='\n有 '+strArrHit+' 个数组装的是 JSON 字符串（如 ["{\\…}"]），已展开成表格逐字段填写；导出时会自动 stringify 回字符串，与粘进来的一致';
   if(!hit&&!ex) m='已解析，但报文里没有可识别的字段（可能是空对象 {}）——请确认粘贴的内容。';
   msg('inMsg',ex?'warn':(hit?'ok':'warn'),m);
 }
@@ -2109,7 +2131,20 @@ function buildModelFromPayload(payload){
       const v=obj[k], kp=path.concat(k), full=kp.join('.');
       if(Array.isArray(v)){
         if(!v.length){ arrays.push({key:full,path:kp,title:k+'（报文里是空数组，字段待补）',fields:[]}); continue }
-        const objs=v.filter(x=>x&&typeof x==='object'&&!Array.isArray(x));
+        /* V1.14.1：数组里装的是「JSON 字符串」—— 报文常见 ["{\"a\":1}"] 这种 List<对象> 序列化写法。
+           以前只认「元素本身是对象」，遇到这种就整段当标量数组、变成一个 String 字段，
+           里面的几十个字段一个都没解析出来。这里先逐项 JSON.parse，全都能解成对象才按对象数组展开，
+           并记 strItems：导出时再把每行 stringify 回字符串，发出的报文与粘进来的一模一样。 */
+        let items=v, strItems=false;
+        if(!v.some(x=>x&&typeof x==='object'&&!Array.isArray(x)) &&
+           v.every(x=>typeof x==='string'&&/^\s*\{/.test(x))){
+          const parsed=v.map(x=>{
+            try{ const o=parseLoose(x); return (o&&typeof o==='object'&&!Array.isArray(o))?o:null }
+            catch(e){ return null }
+          });
+          if(parsed.every(o=>o)){ items=parsed; strItems=true }
+        }
+        const objs=items.filter(x=>x&&typeof x==='object'&&!Array.isArray(x));
         if(!objs.length){   // 标量数组（如 ["a","b"]）→ 当字符串字段，导出时还原成数组
           fields.push({k:full,disp:k,n:'',t:'String',r:false,path:kp,json:true,
             note:'报文里是标量数组（'+v.length+' 项），按 JSON 数组原样导出'});
@@ -2125,7 +2160,8 @@ function buildModelFromPayload(payload){
             af.push({k:kk,n:'',t:typeOfVal(val),r:false});
           }
         }});
-        arrays.push({key:full,path:kp,title:objs.length+' 行',fields:af});
+        arrays.push({key:full,path:kp,fields:af,strItems:strItems||undefined,
+          title:objs.length+' 行'+(strItems?'（元素是 JSON 字符串）':'')});
         continue;
       }
       if(v&&typeof v==='object'){
@@ -2257,9 +2293,20 @@ function shapeKeys(m){
 function diffShape(oldM,newM){
   const ka=shapeKeys(oldM), kb=shapeKeys(newM);
   const add=Object.keys(kb).filter(k=>!ka[k]);
-  const drop=Object.keys(ka).filter(k=>!kb[k]);
+  let drop=Object.keys(ka).filter(k=>!kb[k]);
+  /* V1.14.1：旧协议把「数组套 JSON 字符串」当成一个 String 字段（整串塞在值里），
+     新模型把它展开成了表格 K[]。这属于结构升级，不是「报文里没有这个字段」——
+     不能让它进「可保留」清单，否则同名的标量字段会被塞回原处、和表格同时存在，
+     导出时谁覆盖谁全看顺序。这里直接算升级，并在提示里单独说一句。 */
+  const upgraded=[];
+  drop=drop.filter(k=>{
+    if(kb[k+'[]']){ upgraded.push({k:k,label:(ka[k]||{}).label||k}); return false }
+    return true;
+  });
+  const dropLab=drop.map(k=>ka[k].label);
   const same=Object.keys(kb).filter(k=>ka[k]);
-  return {add:add.map(k=>kb[k].label), drop:drop.map(k=>ka[k].label), same:same, addK:add, dropK:drop};
+  return {add:add.map(k=>kb[k].label), drop:dropLab, same:same, addK:add, dropK:drop,
+          upgraded:upgraded, upgradedLab:upgraded.map(x=>x.label)};
 }
 /* 旧协议按 key 建索引：数组列用「表.列」当键（列名在表内唯一，跨表会撞） */
 function metaIndexOf(m){
@@ -2425,6 +2472,11 @@ function calibrateFromMsg(){
       '<div>报文里多出 <b>'+d.add.length+'</b> 项（会加进协议）：'+
         (d.add.length?li(d.add,8):'<span class="dim">无</span>')+'</div>'+
       '</div>'+
+      (d.upgraded.length
+        ? '<div style="margin-top:8px;color:#166534">另有 <b>'+d.upgraded.length+'</b> 项原来是一整串字符串，'+
+          '报文里其实是「数组装 JSON 字符串」，会升级成表格逐字段填写：'+
+          li(d.upgradedLab,6)+'</div>'
+        : '')+
       (d.drop.length
         ? '<div style="margin-top:9px">协议里有、报文里没有 <b>'+d.drop.length+'</b> 项。'+
           '勾选 = 保留成「默认不发送」的字段（报文不传、服务端有默认值的就勾着），不勾 = 从协议里删掉：</div>'+
