@@ -149,6 +149,22 @@ ul.issues li.w{color:var(--warn)}
  border:1px solid var(--line);border-radius:6px;padding:6px;margin:4px 0;white-space:pre-wrap;
  word-break:break-all;font-family:Consolas,monospace}
 .extag{font-size:11px;color:var(--txt3);white-space:nowrap}
+/* V1.15.0：粘贴后的动作条（不再一粘贴就覆盖现有填写值） */
+.pastebar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px;
+ padding:8px 10px;border:1px dashed var(--pri);border-radius:7px;background:#f6f9ff;font-size:12px}
+.pastebar .pbq{color:var(--txt2)}
+.pastebar .pbmeta{color:var(--txt3);font-size:11px;flex-basis:100%}
+/* V1.15.0：data 外壳编辑行 */
+.shrow{display:flex;align-items:center;gap:8px;padding:5px 12px;border-bottom:1px dashed var(--line2)}
+.shrow:last-of-type{border-bottom:none}
+.shrow .shi{width:22px;text-align:center;color:var(--txt3);font-size:11px;font-family:Consolas,monospace}
+.shrow .shconst{width:190px;font-size:12px;padding:3px 6px}
+.shrow .shbody{flex:1;font-size:12px;color:var(--txt2)}
+.shfoot{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 12px;background:#fafbfc;
+ border-top:1px solid var(--line);font-size:12px}
+.shprev{font-family:Consolas,monospace;font-size:11.5px;color:var(--txt2);background:#fff;
+ border:1px solid var(--line);border-radius:6px;padding:5px 8px;margin:0 12px 8px;white-space:pre-wrap;
+ word-break:break-all}
 .hd .badge{font-size:11px;background:var(--extra-bg);color:var(--extra);padding:1px 7px;
  border-radius:10px;font-weight:600}
 .hd .badge.g{background:var(--pri-bg);color:var(--pri)}
@@ -384,6 +400,8 @@ select:disabled{background:#f3f4f6;color:var(--txt3);cursor:not-allowed}
       <label class="opt"><input type="checkbox" id="tgNotes" checked> 显示字段说明</label>
       <input type="text" id="q" placeholder="搜索字段 / 名称…" style="width:150px">
       <button class="sm" id="btnReset">重置</button>
+      <button class="sm" id="btnUndo" style="display:none"
+        title="撤销上一次「导入报文 / 校准 / 覆盖协议结构」，把字段结构和填写值一起退回去（Ctrl+Z）">↶ 撤销导入</button>
     </div>
   </div>
   <div class="hdrow protobar" id="protoBar">
@@ -446,7 +464,7 @@ select:disabled{background:#f3f4f6;color:var(--txt3);cursor:not-allowed}
   <!-- ================= 右：导入 / 导出 ================= -->
   <div class="col-side">
     <div class="card">
-      <div class="hd"><span class="t">① 粘贴报文</span><span class="d">Ctrl+V 后自动解析</span>
+      <div class="hd"><span class="t">① 粘贴报文</span><span class="d">Ctrl+V 后出动作条，由你决定怎么用</span>
         <span class="spacer"></span>
         <button class="sm pri filebtn">导入字段文档
           <input type="file" id="docxFile" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" style="position:absolute;inset:0;opacity:0;cursor:pointer">
@@ -474,6 +492,15 @@ select:disabled{background:#f3f4f6;color:var(--txt3);cursor:not-allowed}
    securityInfo[0].securityCode=SZ110231
 ③ 上方「导入字段文档」读取 docx / .xlsx 字段定义'></textarea>
         <div class="msg" id="inMsg"></div>
+        <!-- V1.15.0：粘贴只填文本，改由这里选动作 —— 以前一粘贴就自动导入，把已填的值冲掉 -->
+        <div class="pastebar" id="pasteBar" style="display:none">
+          <span class="pbq">这份报文要做什么？（不会自动改动现有填写值）</span>
+          <button class="sm pri" id="pbImport" title="把报文里的值填进当前协议：报文里有的字段才覆盖，报文里没有的字段保留你原来的值">导入当前协议</button>
+          <button class="sm" id="pbNew" title="按这份报文的真实结构新建一份独立协议（含 data 外层数组的槽位）">＋建为协议</button>
+          <button class="sm" id="pbCalib" title="按报文校正当前协议的字段结构，同名字段已填的值保留">按报文校准</button>
+          <button class="sm" id="pbOnly" title="只保留在文本框里，不改任何东西">只看不改</button>
+          <div class="pbmeta" id="pbMeta"></div>
+        </div>
       </div>
     </div>
 
@@ -902,8 +929,17 @@ let SCALARS=[], MAP={}, TOPKEYS=[], ARRS={};
 const LS='rms_repo_msg_tool_v1';          // V1.2 旧 key，仅作迁移来源
 const LS_MODEL='rms_repo_msg_model_v1';   // V1.2 旧 key，仅作迁移来源
 const LS_PROTO='rms_repo_msg_protocols_v2';
-const TOOL_VERSION='1.14.1';
+const TOOL_VERSION='1.15.0';
 const CHANGELOG=[
+ {v:'1.15.0', d:'2026-11-26', items:[
+   '粘贴报文不再自动导入：以前一 Ctrl+V 就把当前协议已填的值清空重填，连「＋建为协议」都救不回来（清空发生在弹窗之前），磁盘备份也被清空后的状态覆盖 —— 现在粘贴只把文本放进去，下面出现一根动作条让你选「导入当前协议 / ＋建为协议 / 按报文校准 / 只看不改」',
+   '导入只覆盖报文里真的带了的字段：报文没有的字段保留你原来的值，手动改过的额外字段也保留；「数值输出为数字」只开不关',
+   '新增「↶ 撤销导入」（Ctrl+Z）：导入报文 / 按报文校准 / 覆盖协议结构 / 重置 之前自动留一份快照，一键退回',
+   '磁盘备份文件里多存一份「上一版」，「恢复」弹窗里可勾选改用它 —— 备份被覆盖后还有一次回退机会',
+   '修：三段式里的 serviceName 现在「＋建为协议」和「按报文校准」也会回填；粘贴的接口名与框里不同时直接换成日志里的值，并在消息里写明换了什么（以前「框里有值就不覆盖」，看着就像没识别）',
+   '新增「data 外壳」可编辑卡片：每槽选一个根字段或填固定值，可加槽 / 删槽 / 关掉外壳，末尾的报文主体可选「对象 / [JSON 字符串] / 字符串」三种包裹 —— 2 槽 ["D",{…}] 和 3 槽 ["D.959","33333",["{…}"]] 都能表达',
+   '用真实报文建协议 / 校准时自动从 data 外层数组反推外壳：["D",{…}] 会建出「机构套别」字段并把 D 填进去，导出按原样拼回去（以前 "D" 这类按位置放的参数被直接丢掉，导出变成裸对象）',
+ ]},
  {v:'1.14.1', d:'2026-11-26', items:[
    '修：报文里「数组装 JSON 字符串」的字段（如 tradeDataList:["{\\"…\\"}"]）以前整串当成一个 String 字段，里面几十个字段一个都没解析出来；现在按报文结构展开成表格，逐字段填写',
    '这种表格导出时会自动把每行 stringify 回字符串，发出的报文与粘进来的一模一样（不会从 ["{…}"] 变成 [{…}]）',
@@ -1143,6 +1179,35 @@ function saveLibNow(){
 function activeProto(){ return LIB.list.find(p=>p.id===LIB.activeId)||null; }
 function flushCurrent(){ const p=activeProto(); if(!p)return;
   p.model=MODEL; p.state=S; p.updatedAt=nowStr(); }
+/* ===== V1.15.0：单步撤销 =====
+   导入报文 / 按报文校准 / 覆盖协议结构 都是破坏性动作 —— 动手前把「字段结构 + 填写值」
+   整份深拷一份，出问题一键退回。只留最近一次，够用也不占内存。 */
+let UNDO=null;
+function snapUndo(why){
+  try{
+    UNDO={at:nowStr(), why:String(why||'操作'), name:(activeProto()||{}).name||'当前协议',
+          model:JSON.parse(JSON.stringify(MODEL||{})),
+          state:JSON.parse(JSON.stringify(S||{}))};
+    syncUndoBtn();
+  }catch(e){ UNDO=null; }
+}
+function syncUndoBtn(){
+  const b=$('btnUndo'); if(!b) return;
+  b.style.display=UNDO?'':'none';
+  b.textContent=UNDO?('↶ 撤销'+UNDO.why):'↶ 撤销导入';
+  b.title=UNDO?('恢复到 '+UNDO.at+' 的状态（协议《'+UNDO.name+'》），快捷键 Ctrl+Z'):'';
+}
+function undoLast(){
+  if(!UNDO){ msg('inMsg','warn','没有可撤销的操作。'); return }
+  const u=UNDO;
+  MODEL=u.model||MODEL; recompute();
+  S=normalizeState(u.state||{});
+  const p=activeProto();
+  if(p){ p.model=MODEL; p.state=S; p.updatedAt=nowStr(); }
+  setSeg(); renderAll(); renderProtoBar(); saveLibNow();
+  UNDO=null; syncUndoBtn();
+  msg('inMsg','ok','已撤销「'+u.why+'」：字段结构与填写值已回到 '+u.at+' 的状态（协议《'+u.name+'》）。');
+}
 /* 旧 key 读取（仅首次迁移用） */
 function loadModelLS(){try{const j=localStorage.getItem(LS_MODEL);if(j)return JSON.parse(j)}catch(e){}return null}
 function loadStateLS(){try{const j=localStorage.getItem(LS);if(j)return JSON.parse(j)}catch(e){}return null}
@@ -1419,9 +1484,98 @@ function addRow(scope,label){
   return '<div class="addrow"><button data-add="'+esc(scope)+'" title="在当前分组末尾加一个新字段">'+
     '+ 新增字段到「'+esc(label)+'」</button></div>';
 }
+/* ===== V1.15.0：data 外壳编辑卡 =====
+   以前外壳是写死在协议里的（换券接口 [套别.机构号, 会话ID, ["{…}"]]），
+   换个接口就变成 [env, {vo}] 也表达不出来。这里把外壳摊成可编辑的槽位行：
+   每槽要么取某个根字段，要么是固定值；最后一行固定是「报文主体」的包裹方式。 */
+function shellOf(){
+  if(!MODEL.shell) MODEL.shell={take:[], strList:false, ver:3};
+  if(!Array.isArray(MODEL.shell.take)) MODEL.shell.take=[];
+  return MODEL.shell;
+}
+function shellBodyMode(){
+  const sh=MODEL.shell||{};
+  return sh.strList?'strList':(sh.strBody?'strBody':'json');
+}
+function shellShapeText(){
+  const sh=MODEL.shell||{}, take=Array.isArray(sh.take)?sh.take:[];
+  const parts=take.map(k=>{
+    const t=String(k==null?'':k);
+    return t.charAt(0)==='='?JSON.stringify(t.slice(1)):('⟨'+t+'⟩');
+  });
+  const mode=shellBodyMode();
+  const body=mode==='strList'?'["{…报文…}"]':(mode==='strBody'?'"{…报文…}"':'{…报文…}');
+  return 'data = ['+parts.concat([body]).join(', ')+']';
+}
+function shellCardHtml(){
+  const sh=MODEL&&MODEL.shell;
+  if(!sh) return '';
+  const take=Array.isArray(sh.take)?sh.take:[];
+  const envKeys=(MODEL.env||[]).map(f=>f.k);
+  const rowHtml=(k,i)=>{
+    const isConst=String(k==null?'':k).charAt(0)==='=';
+    const opts=envKeys.map(x=>'<option value="'+esc(x)+'"'+((!isConst&&x===k)?' selected':'')+'>'+
+      '字段：'+esc(x)+(MAP[x]&&MAP[x].n?('（'+esc(MAP[x].n)+'）'):'')+'</option>').join('')+
+      '<option value="__const__"'+(isConst?' selected':'')+'>固定值…</option>';
+    return '<div class="shrow">'+
+      '<span class="shi">'+(i+1)+'</span>'+
+      '<select class="pathsel" data-shkey="'+i+'" style="min-width:170px">'+opts+'</select>'+
+      '<input type="text" class="shconst" data-shconst="'+i+'" placeholder="例如 D.959" value="'+
+        esc(isConst?String(k).slice(1):'')+'"'+(isConst?'':' style="display:none"')+'>'+
+      '<span class="spacer"></span>'+
+      '<button class="sm" data-shdel="'+i+'">删</button>'+
+      '</div>';
+  };
+  const mode=shellBodyMode();
+  const bodyTxt=mode==='strList'?'报文包成单元素数组：["{…}"]'
+    :(mode==='strBody'?'报文整体转成字符串 "{…}"':'报文对象直接放进去（{…}）');
+  return '<div class="card" id="grpShell">'+
+    '<div class="hd"><span class="t">data 外壳</span>'+
+      '<span class="d">'+(S.shellOn===false?'当前已关闭 → 导出为裸对象':'按下面的顺序拼外层数组')+'</span>'+
+      '<span class="spacer"></span>'+
+      '<label class="opt"><input type="checkbox" id="shOn"'+(S.shellOn===false?'':' checked')+'> 启用外壳</label>'+
+      '<button class="sm" data-shadd="1">+ 加一槽</button>'+
+      '<button class="sm" data-shbody="1" title="在「对象 / [字符串] / 字符串」三种包裹方式之间切换">切换包裹方式</button>'+
+    '</div>'+
+    '<div class="bd" style="padding:2px 0">'+take.map(rowHtml).join('')+
+      '<div class="shrow"><span class="shi">'+(take.length+1)+'</span>'+
+        '<span class="shbody">报文主体 —— '+bodyTxt+'</span></div>'+
+    '</div>'+
+    '<div class="shprev">'+esc(shellShapeText())+'</div>'+
+    '</div>';
+}
+function addShellSlot(){
+  const sh=shellOf();
+  const used=sh.take.filter(k=>String(k).charAt(0)!=='=');
+  const free=(MODEL.env||[]).map(f=>f.k).find(k=>used.indexOf(k)<0);
+  sh.take.push(free||'=');
+  renderGroupsKeepScroll(); sync();
+}
+function delShellSlot(i){
+  const sh=shellOf();
+  if(i<0||i>=sh.take.length) return;
+  sh.take.splice(i,1);
+  renderGroupsKeepScroll(); sync();
+}
+function cycleShellBody(){
+  const sh=shellOf();
+  const mode=shellBodyMode();
+  if(mode==='json'){ sh.strList=true; sh.strBody=false }
+  else if(mode==='strList'){ sh.strList=false; sh.strBody=true }
+  else { sh.strList=false; sh.strBody=false }
+  renderGroupsKeepScroll(); sync();
+}
+function setShellSlot(i,val){
+  const sh=shellOf();
+  if(i<0||i>=sh.take.length) return;
+  sh.take[i]=val;
+  sync();
+}
+
 function renderGroups(){
   let h='';
   const hasBelow=(MODEL.objects||[]).length||(MODEL.arrays||[]).length||(MODEL.main&&MODEL.main.fields);
+  h+=shellCardHtml();
   if(MODEL.env.length||!hasBelow){
     const envLabel=MODEL.envName||'顶层字段';
     h+=groupCard('grpEnv', envLabel, [['对象根','g']],
@@ -1661,15 +1815,22 @@ function buildPayload(){
 function applyShell(payload){
   const sh=MODEL.shell||{};
   const take=Array.isArray(sh.take)?sh.take:[];
-  const strList=!!sh.strList;
+  const strList=!!sh.strList, strBody=!!sh.strBody;
   const pre=shellHead();
-  if(!take.length&&!strList&&pre==='') return payload;
+  if(!take.length&&!strList&&!strBody&&pre==='') return payload;
   const p=(payload&&typeof payload==='object'&&!Array.isArray(payload))?payload:null;
   const out=[];
   if(pre!=='') out.push(pre);                      /* 只有老协议（ver<3）才有常量槽 */
-  take.forEach(k=>{ out.push(takeValue(p,k)) });
+  /* V1.15.0：槽位三种来源 —— 字段（按名字取值并从对象里摘掉）、常量（写成 '=值'） */
+  take.forEach(k=>{
+    const t=String(k==null?'':k);
+    if(t.charAt(0)==='='){ out.push(t.slice(1)); return }
+    out.push(takeValue(p,t));
+  });
   if(strList){
     out.push([JSON.stringify(p)]);
+  }else if(strBody){
+    out.push(JSON.stringify(p));
   }else{
     out.push(p);
   }
@@ -1975,6 +2136,33 @@ function setDeep(obj,key,val){
   }
 }
 
+/* V1.15.0：粘贴后的动作条。只填文本、只显示「这份报文长什么样」，
+   改不改由你点按钮决定 —— 以前一粘贴就自动导入，把已填值冲掉且无法恢复。 */
+function showPasteBar(){
+  const bar=$('pasteBar'); if(!bar) return;
+  const txt=String($('inTxt').value||'').trim();
+  if(!txt){ hidePasteBar(); return }
+  let meta='';
+  try{
+    const pkg=splitPkgText(txt);
+    if(pkg&&pkg.svc) meta+='接口名：'+pkg.svc;
+    const inc=parseIncoming(txt,false);
+    if(inc&&inc.shape){
+      meta+=(meta?'　·　':'')+'data 外层：'+inc.shape.len+' 项数组，'+inc.shape.slots.length+' 个位置参数'+
+        (inc.shape.slots.length?('（'+inc.shape.slots.map(s=>s.value).join(' , ')+'）'):'')+
+        (inc.shape.wrap==='strList'?'，报文包成单元素数组':'');
+    }else if(inc&&inc.payload){
+      meta+=(meta?'　·　':'')+'data 是单个对象（没有外层数组）';
+    }
+  }catch(e){}
+  let filled=0;
+  try{ filled=SCALARS.filter(f=>S.ck[f.k]&&String(S.v[f.k]==null?'':S.v[f.k]).trim()).length }catch(e){}
+  $('pbMeta').textContent=(meta?meta+'　·　':'')+
+    (filled?('当前协议已填 '+filled+' 项，不会被清空（报文里没有的字段一律保留）'):'当前协议还没填值');
+  bar.style.display='flex';
+}
+function hidePasteBar(){ const b=$('pasteBar'); if(b) b.style.display='none'; }
+
 function doImport(txt){
   txt=(txt||'').trim();
   if(!txt) return msg('inMsg','err','内容为空');
@@ -1989,13 +2177,14 @@ function doImport(txt){
     pkgNote=applyPkgToApi(pkg);
   }
   const srcKV=looksLikeKV(txt);
-  let raw, chain=[], multi=0, shellSeen=false;
+  let raw, chain=[], multi=0, shellSeen=false, envShape=null;
   try{
     if(srcKV){ raw=parseKV(txt); }
     else{
+      const val=parseLoose(txt);
       /* 先走原来的剥壳（单槽数组 / 字符串外壳，导出时能原样还回去） */
       let peeled=null;
-      try{ peeled=peel(parseLoose(txt)) }catch(e){}
+      try{ peeled=peel(val) }catch(e){}
       if(peeled){
         raw=peeled.value; chain=peeled.chain;
         const first=chain.find(c=>c.t==='arr');
@@ -2004,15 +2193,20 @@ function doImport(txt){
         /* V1.13.0：三槽外壳 ["D.959","33333",["{…}"]] —— 第 0 项是字符串，
            peel 只跟第 0 项会当场抛错，这里改用「往里找第一个对象」。
            注意不设 outer：导出时外壳由协议的 data 外壳负责，不能套两层。 */
-        const d=deepestObject(parseLoose(txt));
+        const d=deepestObject(val);
         if(!d) throw new Error('内容不是可解析的 JSON 文本');
         raw=d; shellSeen=true;
+        /* V1.15.0：顺手记住外层数组的形状，好把 "D" / "D.959" 这些位置参数填回字段 */
+        envShape=Array.isArray(val)?shellShapeFromRaw(val):null;
       }
     }
   }catch(e){
     return msg('inMsg','err','解析失败：'+(srcKV?'Key=Value 格式有误（应为 每行 key=value）':e.message));
   }
   if(!raw||typeof raw!=='object') return msg('inMsg','err','解析失败：顶层不是对象');
+
+  /* V1.15.0：先给当前状态拍一张快照，导入后可用「↶ 撤销导入」整份退回 */
+  snapUndo('导入报文');
 
   const u=unwrap(raw);
   const p=u.payload;
@@ -2024,8 +2218,11 @@ function doImport(txt){
   const nested = p.tradeInfo && typeof p.tradeInfo==='object';
   S.mode = nested?'nested':'flat';
 
-  SCALARS.forEach(f=>{S.v[f.k]='';S.ck[f.k]=false});
-  for(const a in ARRS){S.arr[a].on=false;S.arr[a].rows=[]}
+  /* ★ V1.15.0：不再「先把整表清空再代入」。
+     报文里带了这个键才覆盖，报文里没有的字段一律保留你原来的值 ——
+     以前一粘贴就清空，手填的内容当场没了，连备份都被清空后的状态覆盖。
+     额外字段同理：只重建报文带来的，你手动改过的（edited）保留。 */
+  const keepEx=(S.ex||[]).filter(e=>e&&e.edited);
   S.ex=[];
 
   let hit=0,ex=0,numSeen=0,strArrHit=0;
@@ -2046,7 +2243,8 @@ function doImport(txt){
       if(arrKey){
         const cfg=ARRS[arrKey], st=S.arr[arrKey];
         st.on=true; st.rows=[];
-        cfg.fields.forEach(f=>st.cols[f.k]=false);
+        /* V1.15.0：不再把列勾选一律清成 false —— 报文里出现的列置为勾选，其余保留你的设置 */
+        st.rows=[];
         /* V1.14.1：元素是 JSON 字符串（["{\"a\":1}"]）时先解析成对象再填行；
            顺便把协议上的 strItems 标记按报文实际情况纠正，否则导出会变成 [{…}] 而不是 ["{…}"] */
         const meta=(MODEL.arrays||[]).find(x=>x&&x.key===arrKey);
@@ -2096,15 +2294,36 @@ function doImport(txt){
   };
   flat(p,'root',[]);
   for(const a in ARRS) if(!S.arr[a].rows.length) S.arr[a].rows=[mkRow(a)];
-  S.num = numSeen>0;   // 按本次报文重置，避免上一份报文的设置串过来
+  /* 手动改过的额外字段：报文里没有也保留，别因为一次导入就消失 */
+  keepEx.forEach(e=>{ if(!S.ex.some(x=>x&&x.k===e.k)) S.ex.push(e) });
+  if(numSeen) S.num=true;   // 只开不关：别把用户手选的「数值输出为数字」又关掉
+
+  /* V1.15.0：报文 data 是 ["D", {…}] 这种外层数组时，把按位置放的参数填回对应字段 */
+  let slotNote='';
+  if(envShape){
+    const takeSh=((MODEL.shell&&MODEL.shell.take)||[]).filter(k=>String(k).charAt(0)!=='=');
+    if(takeSh.length&&takeSh.length===envShape.slots.length){
+      takeSh.forEach((k,i)=>{ if(MAP[k]){ S.v[k]=String(envShape.slots[i].value); S.ck[k]=true } });
+      S.shellOn=true;
+      slotNote='\n已把报文外层数组的 '+takeSh.length+' 个位置参数填回：'+takeSh.join(' / ')+
+        '（'+envShape.slots.map(s=>s.value).join(' , ')+'）';
+    }else if(!takeSh.length){
+      slotNote='\n注意：报文 data 是 '+envShape.len+' 项数组，当前协议没配「data 外壳」，导出的会是裸对象。'+
+        '点「＋建为协议」会按报文把外壳建好，也可以到「data 外壳」卡片里手动补。';
+    }else{
+      slotNote='\n注意：报文外层是 '+envShape.len+' 项数组（含 '+envShape.slots.length+' 个位置参数），'+
+        '但协议里配了 '+takeSh.length+' 个槽 —— 数量不一致，这次没有自动回填，请在「data 外壳」里核对。';
+    }
+  }
 
   setSeg();renderAll();
-  let m='已导入：匹配文档字段 '+hit+' 项';
+  let m='已导入：匹配文档字段 '+hit+' 项（报文里没有的字段保留原值）';
   if(ex) m+='，额外字段 '+ex+' 项（见左下「额外字段」）';
   m+='\n结构判定：'+(srcKV?'Key=Value 格式':(nested?'嵌套 tradeInfo':'扁平'));
   if(pkg) m+='\n已按三段式拆包：只用 data 那一段（serviceName / withEnv 是信封，不是报文字段）'+
     (pkgNote?'；'+pkgNote:'')+'。';
-  if(shellSeen) m+='\n已跳过 data 外壳（三槽数组），直接导入里面的 '+Object.keys(raw).slice(0,3).join(' / ')+' 等字段。';
+  if(shellSeen) m+='\n已跳过 data 外壳（外层数组），直接导入里面的 '+Object.keys(raw).slice(0,3).join(' / ')+' 等字段。';
+  if(slotNote) m+=slotNote;
   if(u.wrap) m+='；已识别网关外层包装（'+u.wrap.path.join('.')+'）';
   if(chain.length) m+='；已剥除外层：'+
     chain.map(c=>c.t==='arr'?('数组('+c.n+')'):'字符串').join(' → ')+
@@ -2205,15 +2424,19 @@ function splitPkgText(txt){
           withEnv:(we==='true'||we==='1')?true:(we==='false'||we==='0'?false:null),
           order:order};
 }
-/* 把三段式里的接口名 / withEnv 回填到发送区（接口名框已有别的值就不覆盖） */
+/* 把三段式里的接口名 / withEnv 回填到发送区。
+   ★ V1.15.0：以前「接口名框已有值就不覆盖」，粘新接口的日志时接口名还是上一个，
+     看着就是「serviceName 没识别」。现在一律以日志为准，换了就明说换了。 */
 function applyPkgToApi(pkg){
   const notes=[];
   if(!pkg) return '';
   const el=$('apiSvcName');
   if(el&&pkg.svc){
     const had=String(el.value||'').trim();
-    if(!had){ el.value=pkg.svc; envPatch({svcName:pkg.svc}); notes.push('接口名已按这段日志填好') }
-    else if(had!==pkg.svc) notes.push('接口名框里已有别的值，没覆盖（日志里是 '+pkg.svc+'）');
+    if(had!==pkg.svc){
+      el.value=pkg.svc; envPatch({svcName:pkg.svc});
+      notes.push(had?('接口名已从「'+had+'」换成「'+pkg.svc+'」'):'接口名已按这段日志填好');
+    }
   }
   const we=$('apiWithEnv');
   if(we&&pkg.withEnv!=null){
@@ -2259,20 +2482,99 @@ function deepestObject(p){
   };
   return walk(p,0);
 }
+/* ===== V1.15.0：从 data 外层数组反推「外壳形状」 =====
+   实测两种写法都要认：
+     ① data = ["D", {…}]                     → 一槽 + 报文本体（inspectTrade 这类）
+     ② data = ["D.959","33333",["{…}"]]      → 两槽 + 报文本体包成单元素数组
+   以前只取最里层对象（deepestObject），"D" 这类按位置放的参数被直接丢掉，
+   导出的报文也就没有外层数组了。这里把外层形状单独抠出来，交给协议存着。 */
+function shellShapeFromRaw(v){
+  if(!Array.isArray(v)||v.length<2) return null;
+  let bodyIdx=-1, wrap='json';
+  for(let i=0;i<v.length;i++){
+    const x=v[i];
+    if(x&&typeof x==='object'&&!Array.isArray(x)){ bodyIdx=i; wrap='json'; break }
+    if(Array.isArray(x)&&x.length){
+      const a0=x[0];
+      if(a0&&typeof a0==='object'&&!Array.isArray(a0)){ bodyIdx=i; wrap='strList'; break }
+      if(typeof a0==='string'&&/^\s*\{/.test(a0)){ bodyIdx=i; wrap='strList'; break }
+    }
+    if(typeof x==='string'&&/^\s*\{/.test(x)){ bodyIdx=i; wrap='str'; break }
+  }
+  if(bodyIdx<0) return null;                 // 纯标量数组（["a","b"]）不是外壳
+  const slots=[];
+  for(let i=0;i<bodyIdx;i++){
+    const x=v[i];
+    if(x==null||typeof x==='object') continue;
+    slots.push({value:String(x)});
+  }
+  return {slots:slots, wrap:wrap, bodyIdx:bodyIdx, len:v.length};
+}
+/* 把反推出的形状挂到协议上：给每个标量槽建一个根字段（默认 env / env2 …），
+   并把 take 按槽位顺序填好 —— 导出时 applyShell 就把它们摆回外层数组。 */
+function attachShellShape(m, shape){
+  if(!m||!shape) return false;
+  const env=m.env||(m.env=[]);
+  const take=[];
+  shape.slots.forEach((s,i)=>{
+    const base=(i===0?'env':'env'+(i+1));
+    let key=base, n=1;
+    while(env.some(f=>f&&f.k===key)) key=base+'_'+(++n);
+    const nm=(i===0?'机构套别':(i===1?'会话ID':('data 第 '+(i+1)+' 槽')));
+    env.push({k:key, disp:key, n:nm, t:'String', r:false, path:[key], shellSlot:1,
+      note:'data 数组第 '+(i+1)+' 项，按位置放（不进出报文对象）'+
+           (s.value!=null&&s.value!==''?('；报文里是 '+s.value):'')});
+    take.push(key);
+  });
+  m.shell={take:take, strList:shape.wrap==='strList', strBody:shape.wrap==='str', ver:3};
+  if(!m.envName||/报文根字段/.test(m.envName)) m.envName='data 头部参数（按顺序：外层数组的前几项）';
+  return true;
+}
+/* 解析一段粘贴文本，同时给出「报文对象」和「外层数组形状」。
+   stripWrap=true 时再剥一层网关包装（params / data / body …），给「建为协议」用。 */
+function parseIncoming(txt,stripWrap){
+  const s0=String(txt||'').trim();
+  const pkg=splitPkgText(s0);
+  const s=pkg?String(pkg.data||'').trim():s0;
+  if(!s) return null;
+  if(looksLikeKV(s)) return {payload:unwrap(parseKV(s)).payload, shape:null, pkg:pkg};
+  const val=parseLoose(s);
+  let shape=null;
+  if(Array.isArray(val)) shape=shellShapeFromRaw(val);
+  else if(val&&typeof val==='object'){
+    const cand=[val.data,val.params,val.body].find(x=>Array.isArray(x));
+    if(cand) shape=shellShapeFromRaw(cand);
+  }
+  let payload=null;
+  try{ const pe=peel(val); payload=(pe&&pe.value&&typeof pe.value==='object'&&!Array.isArray(pe.value))?pe.value:null }catch(e){}
+  if(!payload) payload=deepestObject(val);
+  if(!payload) return null;
+  if(stripWrap){
+    try{ const u=unwrap(payload); if(u&&u.payload&&typeof u.payload==='object') payload=u.payload }catch(e){}
+  }
+  return {payload:payload, shape:shape, pkg:pkg};
+}
 /* 从报文新建协议：解析 → 反推结构 → 复用确认弹窗（可改名）→ 带入报文值 */
 function newProtoFromMsg(){
   const txt=($('inTxt').value||'').trim();
   if(!txt) return msg('inMsg','err','请先把报文粘贴到上方文本框，再点「＋建为协议」。');
-  let p;
-  try{ p=payloadFromText(txt,true) }
+  let inc;
+  try{ inc=parseIncoming(txt,true) }
   catch(e){ return msg('inMsg','err','解析失败：'+e.message) }
-  if(!p) return msg('inMsg','err','解析失败：解析结果不是报文对象，无法反推字段。');
+  if(!inc||!inc.payload) return msg('inMsg','err','解析失败：解析结果不是报文对象，无法反推字段。');
+  /* V1.15.0：三段式里的 serviceName / withEnv 也要落进发送区 —— 以前只有「解析」会填，
+     「＋建为协议」整段跳过，粘完日志接口名还是空的。 */
+  if(inc.pkg) applyPkgToApi(inc.pkg);
+  const p=inc.payload;
   const m=buildModelFromPayload(p);
+  /* V1.15.0：data 是 ["D",{…}] 这种外层数组时，按槽位把外壳建出来，并补上 env 这类位置参数 */
+  const shHit=attachShellShape(m,inc.shape);
   const nf=protoFieldCount({model:m});
   if(!nf&&!m.arrays.length) return msg('inMsg','err','这份报文里没有可识别的字段（可能是空对象 {}）。');
   const topKey=m.objects.length?m.objects[0].key.split('.').pop():
                (m.arrays.length?m.arrays[0].key.split('.').pop():'报文');
-  openImpModal(m,'',{title:'按这份报文新建协议', name:topKey+' 报文', fromMsg:true, text:txt});
+  openImpModal(m,'',{title:'按这份报文新建协议', name:topKey+' 报文', fromMsg:true, text:txt,
+    shellHit:shHit});
 }
 
 /* ========================= 按报文校准当前协议（V1.12.0） =========================
@@ -2427,16 +2729,20 @@ function calibrateFromMsg(){
   if(!txt) return msg('inMsg','err','请先把**真实报文**粘贴到上方文本框，再点「≡ 按报文校准」。');
   const cur=MODEL;
   if(!cur||!isTree()) return msg('inMsg','err','当前协议不是树形协议（从字段文档或报文建的才支持校准）。');
-  let payload;
-  try{ payload=payloadFromText(txt) }
+  let inc;
+  try{ inc=parseIncoming(txt,false) }
   catch(e){ return msg('inMsg','err','解析失败：'+e.message) }
+  const payload=inc&&inc.payload;
   if(!payload) return msg('inMsg','err','这份报文里没有对象结构（空数组 / 纯字符串），无法校准。');
+  /* V1.15.0：三段式里的接口名也回填；当前协议没配外壳时，按报文外层数组补一个 */
+  if(inc.pkg) applyPkgToApi(inc.pkg);
   const newM=buildModelFromPayload(payload);
   if(!protoFieldCount({model:newM})) return msg('inMsg','err','报文里没有可识别的字段（可能是空对象 {}）。');
   /* 结构按报文，其余沿用当前协议 */
   newM.shell=cur.shell; newM.meta=cur.meta; newM.iface=cur.iface;
   newM.numHint=cur.numHint||true;
   newM.envName=cur.envName;
+  const shellAdded=!cur.shell&&attachShellShape(newM,inc.shape);
   /* 位置参数不在报文对象里（套别.机构号 / 会话ID），从当前协议搬回来，槽位才不会少 */
   const take=(cur.shell&&cur.shell.take)||[];
   take.forEach(k=>{
@@ -2472,6 +2778,11 @@ function calibrateFromMsg(){
       '<div>报文里多出 <b>'+d.add.length+'</b> 项（会加进协议）：'+
         (d.add.length?li(d.add,8):'<span class="dim">无</span>')+'</div>'+
       '</div>'+
+      (shellAdded
+        ? '<div style="margin-top:8px;color:#166534">报文 data 是外层数组（'+inc.shape.len+' 项），'+
+          '会给协议补一个「data 外壳」和 '+inc.shape.slots.length+' 个位置参数字段（env 等），'+
+          '导出时按同样形状拼回去。</div>'
+        : '')+
       (d.upgraded.length
         ? '<div style="margin-top:8px;color:#166534">另有 <b>'+d.upgraded.length+'</b> 项原来是一整串字符串，'+
           '报文里其实是「数组装 JSON 字符串」，会升级成表格逐字段填写：'+
@@ -4510,6 +4821,7 @@ function createProtosFromGroups(){
 }
 /* 覆盖当前协议：只保留新定义里仍存在的字段值，旧字段值当场丢弃 */
 function applyModelToCurrent(m){
+  snapUndo('覆盖协议结构');   // V1.15.0：换结构前留一手，可一键退回
   const oldV={...S.v}, oldCk={...S.ck}, oldArr=S.arr, oldEx=S.ex,
         opt={mode:S.mode,fmt:S.fmt,num:S.num,nul:S.nul,wrap:S.wrap,useWrap:S.useWrap};
   MODEL=m; recompute();
@@ -4645,6 +4957,9 @@ const BK_IDB='msgproto_bk_v1', BK_STORE='handles', BK_KEY='file';
 const BK_LS_NAME='rms_repo_msg_bkname';   // 只记住文件名，句柄存不住时给个提示与默认值
 const BK_DEBOUNCE=1500;
 let bkHandle=null, bkTimer=null, bkLastAt='', bkLastErr='', bkInited=false, rstPending=null;
+/* V1.15.0：上一次写进备份文件的内容。备份文件里带一份 prev，
+   这样「误操作把值清空了 → 备份也变成清空后的样子」还能退回上一版。 */
+let bkPrevSnap=null;
 
 function bkSupported(){
   return typeof window.showSaveFilePicker==='function' &&
@@ -4719,9 +5034,12 @@ function bkSnapshot(){
   const p=activeProto();
   if(p){ p.model=MODEL; p.state=S; }        // 不刷新 updatedAt，避免每次备份都改时间
   saveEnvLib();                             // V1.8.0：先把输入框里的环境落盘，再一起写进备份
-  return {fmt:BK_FMT, ver:2, savedAt:nowStr(), app:'报文解析生成工具 V'+TOOL_VERSION,
+  const snap={fmt:BK_FMT, ver:2, savedAt:nowStr(), app:'报文解析生成工具 V'+TOOL_VERSION,
           activeId:LIB.activeId, list:LIB.list,
           envs:{ver:1, activeId:ENVLIB.activeId, list:ENVLIB.list}};
+  /* V1.15.0：把上一版一起写进去（只留一层，不再嵌套），恢复时可选用 */
+  if(bkPrevSnap) snap.prev=bkPrevSnap;
+  return snap;
 }
 async function bkWrite(){
   if(!bkHandle) return false;
@@ -4731,6 +5049,12 @@ async function bkWrite(){
     const w=await bkHandle.createWritable();
     await w.write(txt); await w.close();
     bkLastAt=nowStr(); bkLastErr='';
+    /* 写完把这一版记成「上一版」：深拷一份（parse 出来的对象与 LIB 不再共享引用），
+       并丢掉它自己的 prev，避免文件越滚越大 */
+    try{
+      const o=JSON.parse(txt); delete o.prev;
+      bkPrevSnap={savedAt:o.savedAt, activeId:o.activeId, list:o.list, envs:o.envs};
+    }catch(e){}
     bkSetStatus('on','已备份 '+bkLastAt.slice(11,19)+' · '+LIB.list.length+' 份协议 · '+ENVLIB.list.length+' 套环境');
     return true;
   }catch(e){
@@ -4820,6 +5144,8 @@ function bkRestoreFromText(txt,fileName){
   try{ o=JSON.parse(txt) }
   catch(e){ msg('inMsg','err','备份文件不是合法 JSON，已忽略：'+e.message); return }
   const isBackup=!!(o&&o.fmt===BK_FMT&&Array.isArray(o.list));
+  /* V1.15.0：备份文件里带着上一版（prev），恢复时可选它 —— 误操作覆盖备份后的回退路径 */
+  const prevRaw=(o&&o.prev&&Array.isArray(o.prev.list)&&o.prev.list.length)?o.prev:null;
   const rawList = isBackup ? o.list : (Array.isArray(o)?o:[o]);
   const list = rawList.map(bkNormalizeProto).filter(Boolean);
   /* V1.8.0：从三种形态里捞环境 —— 备份文件的 o.envs.list / 单独导出的环境文件 /
@@ -4845,11 +5171,15 @@ function bkRestoreFromText(txt,fileName){
     msg('inMsg','err','「'+(fileName||'所选文件')+'」里没有可识别的协议（需要 model.env 字段表）。'); return;
   }
   rstPending={list:list, activeId:isBackup?(o.activeId||''):'', isBackup:isBackup,
-              envs:bkEnvRaw, envActive:bkEnvActive};
+              envs:bkEnvRaw, envActive:bkEnvActive, prev:prevRaw,
+              orig:{list:list, activeId:isBackup?(o.activeId||''):'', envs:bkEnvRaw, envActive:bkEnvActive}};
   $('rstInfo').innerHTML=
     '<div class="kv"><b>文件</b><span>'+esc(fileName||'—')+'</span></div>'+
     '<div class="kv"><b>类型</b><span>'+(isBackup?'工具备份文件（含全部协议与填写值）':'单协议 / 其它 json')+'</span></div>'+
     (isBackup?'<div class="kv"><b>备份时间</b><span>'+esc(o.savedAt||'—')+'</span></div>':'')+
+    (prevRaw?'<div class="kv"><b>上一版</b><span>这份备份里还带着上一版（'+esc(prevRaw.savedAt||'—')+' · '+
+      prevRaw.list.length+' 份协议）　<label class="opt" style="display:inline-flex"><input type="checkbox" id="rstPrev"> '+
+      '改用它（误把值清空时用这个）</label></span></div>':'')+
     '<div class="kv"><b>包含协议</b><span>'+list.length+' 份：'+
       esc(list.map(function(p){return p.name}).join('、')).slice(0,180)+'</span></div>'+
     (bkEnvRaw&&bkEnvRaw.length
@@ -4883,6 +5213,22 @@ function bkRenderConflicts(){
        '</div>';
   });
   box.innerHTML=h+'</div>';
+}
+/* V1.15.0：勾选「改用它」时，把待恢复内容换成文件里的上一版（并重画冲突列表） */
+function pickRestoreSet(usePrev){
+  if(!rstPending) return;
+  const src=(usePrev&&rstPending.prev)?rstPending.prev:rstPending.orig;
+  if(!src) return;
+  const l=(src.list||[]).map(bkNormalizeProto).filter(Boolean);
+  if(!l.length) return;
+  rstPending.list=l;
+  rstPending.activeId=src.activeId||'';
+  let pe=null;
+  if(src.envs&&Array.isArray(src.envs.list)) pe=src.envs.list.map(envNormalizeOne).filter(Boolean);
+  else if(Array.isArray(src.envs)) pe=src.envs;
+  rstPending.envs=(pe&&pe.length)?pe:null;
+  rstPending.envActive=(src.envs&&src.envs.activeId)||'';
+  bkRenderConflicts();
 }
 function bkApplyRestore(mode){
   if(!rstPending) return;
@@ -5081,6 +5427,12 @@ document.addEventListener('input',e=>{
     if(it) it.name=t.value;
     return;
   }
+  if(t.classList.contains('shconst')){          // V1.15.0：外壳槽位改成固定值，只存不重绘
+    setShellSlot(+t.dataset.shconst,'='+t.value);
+    const p=document.querySelector('#grpShell .shprev');
+    if(p) p.textContent=shellShapeText();
+    return;
+  }
   if(t.classList.contains('vi')){S.v[t.dataset.k]=t.value;
     if(t.value&&!S.ck[t.dataset.k]){S.ck[t.dataset.k]=true;
       const c=document.querySelector('.ck[data-k="'+t.dataset.k+'"]');if(c)c.checked=true}
@@ -5127,6 +5479,15 @@ document.addEventListener('change',e=>{
     return;
   }
   if(t.id==='protoSel'){ activateProto(t.value); return }
+  /* V1.15.0：data 外壳槽位 / 开关 */
+  if(t.id==='shOn'){ S.shellOn=!!t.checked; renderGroupsKeepScroll(); sync(); return }
+  if(t.id==='rstPrev'){ pickRestoreSet(!!t.checked); return }
+  if(t.dataset.shkey!=null){
+    const i=+t.dataset.shkey;
+    setShellSlot(i, t.value==='__const__' ? '=' : t.value);
+    renderGroupsKeepScroll();
+    return;
+  }
   if(t.id==='protoFile'){
     const f=t.files&&t.files[0]; if(!f) return;
     importProtoFile(f).catch(err=>msg('inMsg','err','导入协议失败：'+err.message));
@@ -5168,6 +5529,10 @@ document.addEventListener('click',e=>{
   if(t.dataset.add){
     openFieldDlg(null,t.dataset.add,true); return;
   }
+  /* V1.15.0：data 外壳编辑 */
+  if(t.dataset.shadd){ addShellSlot(); return }
+  if(t.dataset.shdel!=null){ delShellSlot(+t.dataset.shdel); return }
+  if(t.dataset.shbody){ cycleShellBody(); return }
   if(t.dataset.fd){
     const a=t.dataset.fd;
     if(a==='cancel'){ closeFd(); return }
@@ -5317,9 +5682,14 @@ document.addEventListener('click',e=>{
     if(t.dataset.nm==='cancel'){closeNmModal();return}
     if(t.dataset.nm==='apply'){applyNmNames();return}
   }
-  if(t.id==='btnClearIn'){$('inTxt').value='';msg('inMsg','','');return}
-  if(t.id==='btnReset'){if(confirm('清空所有字段值与勾选，恢复初始状态？')){
-    S=blank();setSeg();renderAll();msg('inMsg','','')}return}
+  if(t.id==='btnClearIn'){$('inTxt').value='';msg('inMsg','','');hidePasteBar();return}
+  if(t.id==='btnUndo'){undoLast();return}
+  if(t.id==='pbImport'){hidePasteBar();doImport($('inTxt').value);return}
+  if(t.id==='pbNew'){hidePasteBar();newProtoFromMsg();return}
+  if(t.id==='pbCalib'){hidePasteBar();calibrateFromMsg();return}
+  if(t.id==='pbOnly'){hidePasteBar();msg('inMsg','','报文只留在文本框里，没有改动任何字段值。');return}
+  if(t.id==='btnReset'){if(confirm('清空所有字段值与勾选，恢复初始状态？\n（清空后可用左上「↶ 撤销」退回）')){
+    snapUndo('重置');S=blank();setSeg();renderAll();msg('inMsg','','')}return}
   if(t.dataset.m){S.mode=t.dataset.m;setSeg();sync();return}
   if(t.dataset.f){S.fmt=t.dataset.f;setSeg();renderOut();save();return}
   if(t.id==='btnCopy'){copyOut();return}
@@ -5342,7 +5712,8 @@ function copyOut(){
       msg('outMsg','err','浏览器拦截了复制，请手动选中报文框内容复制')}
     document.body.removeChild(ta)}
 }
-$('inTxt').addEventListener('paste',()=>setTimeout(()=>doImport($('inTxt').value),0));
+/* V1.15.0：粘贴只填文本 + 出动作条，不再自动导入（一贴就覆盖已填值，且备份也被清空后的状态盖掉） */
+$('inTxt').addEventListener('paste',()=>setTimeout(()=>showPasteBar(),0));
 /* ===================== V1.14.0 字段结构编辑的事件 ===================== */
 /* 必填三态：改完立即生效（不重绘整表，免得输入框丢焦点） */
 document.addEventListener('change',e=>{
@@ -5424,6 +5795,11 @@ document.addEventListener('keydown',e=>{
   if(e.key==='Escape'&&rstOpen){closeRstModal();e.preventDefault();return}
   if(e.key==='Escape'&&nmOpen){closeNmModal();e.preventDefault();return}
   if(e.key==='Escape'&&modalOpen){closeImpModal();e.preventDefault();return}
+  /* V1.15.0：Ctrl+Z = 撤销上一次导入 / 校准（焦点在输入框里时不抢，留给浏览器撤销文字） */
+  if((e.ctrlKey||e.metaKey)&&!e.shiftKey&&UNDO&&(e.key==='z'||e.key==='Z')){
+    const tag=(e.target&&e.target.tagName||'').toLowerCase();
+    if(tag!=='input'&&tag!=='textarea'){ e.preventDefault(); undoLast(); return }
+  }
   /* V1.4.0：Ctrl+S = 立即备份到磁盘，拦掉浏览器「保存网页」 */
   if((e.ctrlKey||e.metaKey)&&!e.shiftKey&&(e.key==='s'||e.key==='S')){
     e.preventDefault(); bkNow(); return;
