@@ -58,7 +58,7 @@ header .sub{color:var(--txt3);font-size:12px}
 .chip.good{background:var(--ok-bg);color:var(--ok)}
 
 /* field rows */
-.row{display:grid;grid-template-columns:34px 200px 168px 92px 46px minmax(180px,1fr);
+.row{display:grid;grid-template-columns:34px 200px 168px 92px 80px minmax(180px,1fr);
  gap:8px;align-items:center;padding:5px 12px;border-bottom:1px solid var(--line2)}
 .row:last-child{border-bottom:none}
 .row.head{background:#fafbfc;font-size:12px;color:var(--txt3);font-weight:600;position:sticky;
@@ -66,6 +66,25 @@ header .sub{color:var(--txt3);font-size:12px}
 .row:hover:not(.head){background:#fbfcfe}
 .row .k{font-family:Consolas,monospace;font-size:12.5px;word-break:break-all}
 .row .n{color:var(--txt2);font-size:12.5px}
+/* V1.14.0：键名可点开「字段设置」，必填列改成三态下拉 */
+.row .k{display:flex;align-items:center;gap:3px;min-width:0}
+.row .k .kn{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.row .k .kbtn{flex:0 0 auto;border:none;background:transparent;color:var(--txt3);cursor:pointer;
+ font-size:11px;line-height:1;padding:3px 3px;border-radius:3px;opacity:.45;transition:opacity .12s}
+.row:hover .k .kbtn,.row .k .kbtn:focus-visible{opacity:1}
+.row .k .kbtn:hover{background:var(--pri-bg);color:var(--pri)}
+.row select.rqsel{width:100%;font-size:11.5px;padding:2px 1px;border:1px solid transparent;
+ background:transparent;color:var(--txt3);border-radius:4px;cursor:pointer;font-family:inherit}
+.row select.rqsel:hover{border-color:var(--line);background:#fff}
+.row select.rqsel:focus{border-color:var(--pri);background:#fff;outline:none}
+.row select.rqsel.rq-y{color:var(--req);font-weight:600}
+.row select.rqsel.rq-c{color:var(--warn);font-weight:600}
+.row .kx{font-size:10.5px;color:var(--txt3);background:#f0f2f5;border-radius:3px;padding:0 3px;
+ margin-left:2px;flex:0 0 auto}
+.addrow{padding:7px 12px;border-top:1px solid var(--line2);background:#fafbfc}
+.addrow button{border:1px dashed var(--line);background:#fff;color:var(--txt2);font-size:12px;
+ padding:3px 12px;border-radius:5px;cursor:pointer}
+.addrow button:hover{border-color:var(--pri);color:var(--pri)}
 /* V1.6.0：名称列可直接编辑，平时无边框、悬停才显示框 */
 .row .n input.ni{border-color:transparent;background:transparent;padding:2px 5px;font-size:12.5px;
  color:var(--txt2);border-radius:4px}
@@ -238,6 +257,27 @@ ul.issues li.w{color:var(--warn)}
 #cfBody .cfkeep .lbl{flex:1 1 auto;word-break:break-all}
 #cfBody .cfkeep .lbl b{color:var(--txt);font-weight:600}
 #cfBody .cfbar{display:flex;gap:6px;align-items:center;margin-top:7px;font-size:12px;color:var(--txt3)}
+/* ===== V1.14.0 字段设置弹窗 ===== */
+.fdb{width:620px}
+.fdrow{display:grid;grid-template-columns:86px 1fr;gap:10px;align-items:center;margin-bottom:9px}
+.fdrow>label{font-size:12px;color:var(--txt3);text-align:right;white-space:nowrap}
+.fdrow input[type=text],.fdrow select{font-size:12.5px;padding:0 8px;height:32px;box-sizing:border-box;
+ border:1px solid var(--line);border-radius:5px;width:100%;font-family:inherit;color:var(--txt);
+ background:#fff}
+.fdrow textarea{font-size:12.5px;padding:5px 8px;border:1px solid var(--line);border-radius:5px;
+ width:100%;font-family:inherit;color:var(--txt);background:#fff}
+.fdrow input[type=text]:focus,.fdrow select:focus,.fdrow textarea:focus{outline:none;border-color:var(--pri)}
+.fdrow textarea{resize:vertical;min-height:46px;line-height:1.55}
+.fdrow .fk{font-family:Consolas,monospace}
+.fdpath{grid-column:2;font-size:11.5px;color:var(--txt3);margin:-4px 0 8px;font-family:Consolas,monospace;
+ word-break:break-all}
+.fdpath b{color:var(--pri);font-weight:600}
+.fdtip{font-size:11.5px;color:var(--txt3);line-height:1.65;border-top:1px dashed var(--line2);
+ padding-top:9px;margin-top:2px}
+.fdtip .bad{color:var(--req);display:block;margin-top:3px}
+.fdtip .warn{color:var(--warn);display:block;margin-top:3px}
+#fdDel{color:var(--req);border-color:#f0c9c9;margin-right:auto}
+#fdDel:hover{background:var(--req-bg)}
 /* ===== V1.6.0 补充字段名称弹窗 ===== */
 .mbox.namebox{width:860px}
 .namebox .mb{padding:12px 18px}
@@ -707,6 +747,46 @@ dealer=外部接口本方交易员
   </div>
 </div>
 
+<!-- ================= V1.14.0 字段设置：改键名 / 位置 / 必填 / 增删 ================= -->
+<div class="mask" id="fdMask">
+  <div class="mbox fdb">
+    <div class="mt" id="fdTitle">字段设置</div>
+    <div class="mb">
+      <div class="fdrow"><label>键名</label>
+        <input type="text" id="fdKey" class="fk" spellcheck="false" placeholder="报文里真正用的键名，如 sessionId"></div>
+      <div class="fdpath" id="fdPath"></div>
+      <div class="fdrow"><label>名称</label>
+        <input type="text" id="fdName" placeholder="给人看的中文说明，可留空"></div>
+      <div class="fdrow"><label>Java 类型</label>
+        <select id="fdType">
+          <option value="String">String</option>
+          <option value="Integer">Integer</option>
+          <option value="Long">Long</option>
+          <option value="BigDecimal">BigDecimal</option>
+          <option value="Boolean">Boolean</option>
+        </select></div>
+      <div class="fdrow"><label>必填</label>
+        <select id="fdReq">
+          <option value="req">必填</option>
+          <option value="cond">条件必填（整组至少传一个）</option>
+          <option value="no">否</option>
+        </select></div>
+      <div class="fdrow"><label>所在位置</label>
+        <select id="fdSlot"></select></div>
+      <div class="fdrow"><label>组内顺序</label>
+        <select id="fdPos"></select></div>
+      <div class="fdrow"><label>备注</label>
+        <textarea id="fdNote" rows="2" placeholder="留空则不显示备注行"></textarea></div>
+      <div class="fdtip" id="fdTip"></div>
+    </div>
+    <div class="mf">
+      <button class="sm" id="fdDel" data-fd="del">删除这个字段</button>
+      <button class="sm" data-fd="cancel">取消</button>
+      <button class="sm pri" data-fd="save">保存</button>
+    </div>
+  </div>
+</div>
+
 <!-- ================= 导入字段文档：新建 / 覆盖 ================= -->
 <div class="mask" id="impMask">
   <div class="mbox">
@@ -822,8 +902,16 @@ let SCALARS=[], MAP={}, TOPKEYS=[], ARRS={};
 const LS='rms_repo_msg_tool_v1';          // V1.2 旧 key，仅作迁移来源
 const LS_MODEL='rms_repo_msg_model_v1';   // V1.2 旧 key，仅作迁移来源
 const LS_PROTO='rms_repo_msg_protocols_v2';
-const TOOL_VERSION='1.13.1';
+const TOOL_VERSION='1.14.0';
 const CHANGELOG=[
+ {v:'1.14.0', d:'2026-11-26', items:[
+   '字段表现在能改结构了：点键名旁的铅笔（或双击键名）打开「字段设置」，可改键名、名称、Java 类型、必填、所在位置、组内顺序、备注',
+   '改键名会连着把已填的值、勾选、类型覆盖、子路径一起搬过去，data 三槽外壳的取用也跟着换名 —— 不会再出现「名字改了、值没了」或「外壳发 undefined」',
+   '位置可跨分组/跨层级调整：文档把 sessionId 写在 tradeInfo 里、实际在报文外层，直接在「所在位置」选「顶层字段」就能挪出去，导出立刻落到根上',
+   '必填列改成三态下拉（必填 / 条件必填 / 否），改完立刻重算校验；手动标成必填的字段没带上时，发送前会拦一道并列出是哪几项',
+   '每个分组底部加了「+ 新增字段」，行尾可删除字段；删除时已填的值不会静默丢，会挪到「额外字段」里留着（默认不发送）',
+   '修：校准里勾选保留的字段会被旧勾选状态套回去、照旧发送，与「默认不发送」的说明相反；现在标了 off 就一定是未勾选',
+ ]},
  {v:'1.13.1', d:'2026-11-24', items:[
    '版本变更日志默认收起：页面底部只留一行标题 + 当前版本号 + 「共 N 个版本」，点标题（或按回车 / 空格）展开，展开后内容区限高可滚动，不再把页面撑得很长',
    '展开 / 收起状态记在本机浏览器，下次打开保持上次的选择；协议与填写值的存放说明挪到日志展开后的第一行，不再占着标题栏',
@@ -1082,6 +1170,207 @@ const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',
 const bytes=s=>{let n=0;for(const ch of String(s))n+=ch.charCodeAt(0)>127?2:1;return n};
 
 /* ========================= 渲染 ========================= */
+/* ===================== V1.14.0 字段结构编辑 =====================
+   文档写的是 A、实际报文叫 A1；文档把 sessionId 放在 tradeInfo 里、实际在外层。
+   以前只能重新导入文档或按报文校准，现在直接在字段表上改键名、位置、必填、增删。
+   核心约束：k 是整份工具的主键（S.v / S.ck / S.ty / 数组列 / 外壳 take / 校验特判都用它），
+   所以改名必须「连值一起搬」，不能只改字符串。 */
+function fieldSlots(){
+  const out=[{id:'env', label:(MODEL.envName||'顶层字段'), path:[]}];
+  if(MODEL.main&&Array.isArray(MODEL.main.fields))
+    out.push({id:'main', label:(MODEL.main.title||'tradeInfo 交易信息'),
+              path:[String(MODEL.main.key||'tradeInfo')]});
+  (MODEL.objects||[]).forEach((o,i)=>{
+    out.push({id:'obj'+i, label:(o.title||o.key||('对象 '+(i+1))),
+              path:Array.isArray(o.path)?o.path:String(o.key||'').split('.')});
+  });
+  return out;
+}
+function slotFields(id){
+  if(id==='env') return MODEL.env;
+  if(id==='main') return MODEL.main?MODEL.main.fields:null;
+  const m=/^obj(\d+)$/.exec(String(id));
+  if(m){ const o=(MODEL.objects||[])[+m[1]]; return o?o.fields:null; }
+  return null;
+}
+function scopeLabel(id){
+  const s=fieldSlots().find(x=>x.id===id);
+  return s?s.label:'顶层字段';
+}
+/* 改键名时把「已填的值 / 勾选 / 类型覆盖 / 子路径 / 外壳取值」一起搬过去。
+   只搬 k 精确相等与 oldK. 前缀（树形协议的字段 k 是全路径，改中间节点要连带子字段）。 */
+function migrateKeyPrefix(oldK,newK){
+  if(!oldK||!newK||oldK===newK) return 0;
+  const pref=oldK+'.';
+  const rekey=o=>{ if(!o) return 0; let n=0;
+    Object.keys(o).forEach(k=>{
+      if(k===oldK){ o[newK]=o[k]; delete o[k]; n++; }
+      else if(String(k).indexOf(pref)===0){ o[newK+String(k).slice(oldK.length)]=o[k]; delete o[k]; n++; }
+    });
+    return n;
+  };
+  let n=rekey(S.v); rekey(S.ck); rekey(S.ty);
+  /* 树形：字段 k 是全路径，path 跟着重算；disp 是本层显示名 */
+  fieldSlots().forEach(s=>{
+    const arr=slotFields(s.id); if(!arr) return;
+    arr.forEach(f=>{
+      if(f.k===oldK) f.k=newK;
+      else if(String(f.k).indexOf(pref)===0) f.k=newK+String(f.k).slice(oldK.length);
+      if(Array.isArray(f.path)) f.path=String(f.k).split('.');
+      if(f.disp) f.disp=String(f.k).split('.').pop();
+    });
+  });
+  /* data 三槽外壳按 k 摘字段（cusNumber / sessionId），改名后不跟着换就会发出 undefined */
+  const sh=MODEL.shell;
+  if(sh&&Array.isArray(sh.take)) sh.take=sh.take.map(t=>
+    (t===oldK)?newK:(String(t).indexOf(pref)===0?newK+String(t).slice(oldK.length):t));
+  return n;
+}
+let FD={k:null,scope:null,mode:'edit'};
+function fdSetTip(s,cls){
+  const el=$('fdTip');
+  if(!s){
+    el.innerHTML='改完点保存；改动只影响当前这份协议，不动其它协议。'+
+      '数组表格的列不在这里移动（点表头里的列名可以改名称）。';
+    return;
+  }
+  el.innerHTML='<span class="'+(cls||'')+'">'+esc(s)+'</span>';
+}
+/* 改完结构要整表重绘，页面会跳回顶部 —— 记一下滚动位置再还原 */
+function renderGroupsKeepScroll(){
+  const sc=document.scrollingElement||document.documentElement;
+  const y=sc?sc.scrollTop:0;
+  renderGroups();
+  if(sc) sc.scrollTop=y;
+}
+function fdPathHint(){
+  const leaf=$('fdKey').value.trim();
+  const sp=fieldSlots().find(s=>s.id===$('fdSlot').value);
+  const el=$('fdPath'); if(!el) return;
+  if(!isTree()){
+    el.innerHTML='报文里的键名：<b>'+esc(leaf||'（待填）')+'</b>';
+    return;
+  }
+  const path=((sp&&sp.path)||[]).concat(leaf||'（待填）');
+  el.innerHTML='树形协议按位置自动拼全路径：<b>'+esc(path.join('.'))+'</b>';
+}
+function fillFdPos(want){
+  const dst=slotFields($('fdSlot').value)||[];
+  const total=dst.length+(FD.mode==='new'?1:0);
+  const max=Math.max(total,1);
+  let h='';
+  for(let i=0;i<max;i++)
+    h+='<option value="'+i+'">第 '+(i+1)+' 位'+(i===0?'（最前）':(i===max-1?'（最后）':''))+'</option>';
+  $('fdPos').innerHTML=h;
+  const v=(want==null)?max-1:want;
+  $('fdPos').value=String(Math.max(0,Math.min(v,max-1)));
+}
+function openFieldDlg(k,scope,isNew){
+  const arr=slotFields(scope)||[];
+  const f=isNew?null:arr.find(x=>x.k===k);
+  if(!isNew&&!f){ msg('inMsg','err','这个字段已经不在协议里了，请刷新后再试。'); return }
+  FD={k:k||null,scope:scope,mode:isNew?'new':'edit'};
+  $('fdTitle').textContent=isNew?('新增字段 · '+scopeLabel(scope)):('字段设置 · '+k);
+  $('fdKey').value=isNew?'':(isTree()?String(f.k).split('.').pop():String(f.k));
+  $('fdName').value=isNew?'':(f.n||'');
+  $('fdType').value=isNew?'String':(f.t||'String');
+  $('fdReq').value=isNew?'no':(f.r?(f.cond?'cond':'req'):'no');
+  $('fdNote').value=isNew?'':(f.note||'');
+  const sl=fieldSlots();
+  $('fdSlot').innerHTML=sl.map(s=>{
+    const p=(s.path||[]).join('.');
+    /* 有中文标题的对象才补路径，否则「tradeInfo（tradeInfo）」这种重复看着像 bug */
+    const tail=(p&&p!==s.label)?'（'+p+'）':'';
+    return '<option value="'+esc(s.id)+'"'+(s.id===scope?' selected':'')+'>'+
+      esc(s.label)+esc(tail)+'</option>';
+  }).join('');
+  fillFdPos(isNew?null:arr.indexOf(f));
+  $('fdDel').style.display=isNew?'none':'';
+  fdSetTip('');
+  fdPathHint();
+  $('fdMask').classList.add('open');
+  setTimeout(()=>{ $('fdKey').focus(); $('fdKey').select() },30);
+}
+function closeFd(){ $('fdMask').classList.remove('open'); FD={k:null,scope:null,mode:'edit'} }
+function saveFieldDlg(){
+  const leaf=$('fdKey').value.trim();
+  if(!leaf) return fdSetTip('键名不能为空。','bad');
+  if(!/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(leaf))
+    return fdSetTip('键名只能用字母、数字、下划线、$，且不能以数字开头 —— 报文里的 JSON 键名不可能是别的写法。','bad');
+  const slotId=$('fdSlot').value;
+  const dst=slotFields(slotId);
+  if(!dst) return fdSetTip('目标分组不可用，换一个位置试试。','bad');
+  const isNew=FD.mode==='new';
+  const src=slotFields(FD.scope)||[];
+  const f=isNew?null:src.find(x=>x.k===FD.k);
+  if(!isNew&&!f) return fdSetTip('这个字段已经不在协议里了，关掉重开。','bad');
+  const leafOf=x=>isTree()?String(x.k).split('.').pop():String(x.k);
+  if(dst.some(x=>x!==f&&leafOf(x)===leaf))
+    return fdSetTip('「'+leaf+'」在这个分组里已经有一个了，换个键名或换分组。','bad');
+
+  const newName=$('fdName').value.trim();
+  const newType=$('fdType').value||'String';
+  const rq=$('fdReq').value;
+  const note=$('fdNote').value.trim();
+  const wantPos=parseInt($('fdPos').value,10)||0;
+  const sp=fieldSlots().find(s=>s.id===slotId);
+  const newPath=(isTree()&&sp)?(sp.path||[]).concat(leaf):null;
+  let newK=newPath?newPath.join('.'):leaf;
+  let oldK=null, moved=0;
+
+  if(isNew){
+    const nf={k:newK,n:newName,t:newType};
+    if(rq==='req'){ nf.r=1; nf.mreq=1 }
+    else if(rq==='cond'){ nf.r=1; nf.cond=1; nf.mreq=1 }
+    if(note) nf.note=note;
+    if(newPath) nf.path=newPath;
+    dst.splice(Math.max(0,Math.min(wantPos,dst.length)),0,nf);
+    if(!(newK in S.v)) S.v[newK]='';
+    if(!(newK in S.ck)) S.ck[newK]=true;
+  }else{
+    oldK=f.k;
+    /* 非树形协议里 k 也可能是带点的老格式，此时只换最后一段 */
+    if(!isTree()&&String(oldK).indexOf('.')>0)
+      newK=String(oldK).split('.').slice(0,-1).join('.')+'.'+leaf;
+    if(newK!==oldK){ moved=migrateKeyPrefix(oldK,newK) }
+    if(newPath) f.path=newPath;
+    f.n=newName; f.t=newType;
+    if(rq==='req'){ f.r=1; f.cond=0 }
+    else if(rq==='cond'){ f.r=1; f.cond=1 }
+    else { f.r=0; f.cond=0 }
+    if(rq==='no') delete f.mreq; else f.mreq=1;
+    if(note) f.note=note; else delete f.note;
+    if(f.disp) f.disp=leaf;
+    const from=src.indexOf(f);
+    if(from>=0) src.splice(from,1);
+    dst.splice(Math.max(0,Math.min(wantPos,dst.length)),0,f);
+  }
+  recompute(); save(); renderGroupsKeepScroll(); sync(); closeFd();
+  const tail=(!isNew&&oldK&&oldK!==newK)
+    ? '（原来是 '+oldK+'，已填的值、勾选、外壳取值都一起迁过来了）' : '';
+  msg('inMsg','ok',(isNew?'已新增字段 ':'已更新字段 ')+newK+tail+
+    '\n所在位置：'+scopeLabel(slotId));
+}
+function delFieldNow(k,scope){
+  const src=slotFields(scope)||[];
+  const f=src.find(x=>x.k===k); if(!f) return;
+  const v=S.v[k];
+  /* 值不静默丢：塞进「额外字段」留着，默认不发送，想找回随时能拷走 */
+  if(v!=null&&String(v)!==''){
+    let at='root';
+    if(!isTree()) at=(scope==='main')?'tradeInfo':'root';
+    else { const p=String(k).split('.'); p.pop(); at=p.join('.')||'root' }
+    S.ex.push({k:isTree()?String(k).split('.').pop():k, v:String(v),
+               on:false, at:at, from:'deleted'});
+  }
+  const shellHit=!!(MODEL.shell&&Array.isArray(MODEL.shell.take)&&MODEL.shell.take.indexOf(k)>=0);
+  if(shellHit) MODEL.shell.take=MODEL.shell.take.filter(t=>t!==k);
+  src.splice(src.indexOf(f),1);
+  delete S.v[k]; delete S.ck[k]; delete S.ty[k];
+  recompute(); save(); renderGroupsKeepScroll(); sync();
+  msg('inMsg','ok','已删除字段 '+k+(String(v||'')!==''?'（原值已放进「额外字段」，默认不发送）':'')+
+    (shellHit?'\n注意：它原来被 data 外壳取用，已一并从外壳里去掉。':''));
+}
 const HEAD='<div></div><div>字段</div><div title="名称列可直接编辑">名称 ✎</div><div>Java类型</div><div>必填</div><div>值</div>';
 function groupCard(id,title,badges,body){
   const b=badges.map(x=>'<span class="badge '+(x[1]||'')+'">'+esc(x[0])+'</span>').join('');
@@ -1098,35 +1387,53 @@ function fieldRow(f,scope){
   if(f.rule) note+=(note?'\n':'')+'<b>校验：</b>'+esc(f.rule);
   const reqTag = f.r ? (f.cond?'<span class="tag y">条件必填</span>':'<span class="tag y">必填</span>')
                      : '<span class="tag n">否</span>';
+  const rqVal = f.r ? (f.cond?'cond':'req') : 'no';
+  const rqCls = rqVal==='req' ? 'rq-y' : (rqVal==='cond' ? 'rq-c' : '');
   const disp = f.disp||f.k;   // 树形协议：k 是全路径，列里只显示本层键名
-  return '<div class="row" data-k="'+f.k+'" data-search="'+esc((f.k+' '+(f.n||'')).toLowerCase())+'">'+
-   '<div><input type="checkbox" class="ck" data-k="'+f.k+'"'+(S.ck[f.k]?' checked':'')+'></div>'+
-   '<div class="k">'+esc(disp)+'</div>'+
-   '<div class="n"><input type="text" class="ni" data-k="'+f.k+'" value="'+esc(f.n||'')+'"'+
+  return '<div class="row" data-k="'+esc(f.k)+'" data-scope="'+esc(scope)+'" data-search="'+esc((f.k+' '+(f.n||'')).toLowerCase())+'">'+
+   '<div><input type="checkbox" class="ck" data-k="'+esc(f.k)+'"'+(S.ck[f.k]?' checked':'')+'></div>'+
+   '<div class="k" title="'+esc(f.k)+'"><span class="kn">'+esc(disp)+'</span>'+
+     (f.mreq?'<span class="kx" title="这一项是手动改过必填的（不是文档原来标的）">手动</span>':'')+
+     '<button class="kbtn" data-k="'+esc(f.k)+'" data-scope="'+esc(scope)+'"'+
+       ' title="改键名 / 调位置 / 改必填 / 删除">✎</button></div>'+
+   '<div class="n"><input type="text" class="ni" data-k="'+esc(f.k)+'" value="'+esc(f.n||'')+'"'+
      ' placeholder="填名称" title="直接输入字段名称；也可以用右侧「补充字段名称」批量粘贴字段说明自动匹配"></div>'+
    '<div class="ty">'+esc(f.t)+'</div>'+
-   '<div>'+reqTag+'</div>'+
-   '<div class="vwrap"><input type="text" class="vi" data-k="'+f.k+'" value="'+esc(S.v[f.k]||'')+'"'+
+   '<div><select class="rqsel '+rqCls+'" data-k="'+esc(f.k)+'" data-scope="'+esc(scope)+'"'+
+     ' title="必填：未勾选或值为空会报红；条件必填：整组至少传一个">'+
+     '<option value="req"'+(rqVal==='req'?' selected':'')+'>必填</option>'+
+     '<option value="cond"'+(rqVal==='cond'?' selected':'')+'>条件必填</option>'+
+     '<option value="no"'+(rqVal==='no'?' selected':'')+'>否</option></select></div>'+
+   '<div class="vwrap"><input type="text" class="vi" data-k="'+esc(f.k)+'" value="'+esc(S.v[f.k]||'')+'"'+
      (f.opts?' list="'+dl+'"':'')+' placeholder="'+esc(f.ph||'')+'">'+opts+'</div>'+
    (note?'<div class="note">'+note+'</div>':'')+'</div>';
+}
+function addRow(scope,label){
+  return '<div class="addrow"><button data-add="'+esc(scope)+'" title="在当前分组末尾加一个新字段">'+
+    '+ 新增字段到「'+esc(label)+'」</button></div>';
 }
 function renderGroups(){
   let h='';
   const hasBelow=(MODEL.objects||[]).length||(MODEL.arrays||[]).length||(MODEL.main&&MODEL.main.fields);
   if(MODEL.env.length||!hasBelow){
-    h+=groupCard('grpEnv', MODEL.envName||'顶层字段', [['对象根','g']],
+    const envLabel=MODEL.envName||'顶层字段';
+    h+=groupCard('grpEnv', envLabel, [['对象根','g']],
        '<div class="row head">'+HEAD+'</div>'+(MODEL.env.length?MODEL.env.map(f=>fieldRow(f,'env')).join('')
-         :'<div style="padding:10px 12px;color:var(--txt3)">根节点没有标量字段</div>'));
+         :'<div style="padding:10px 12px;color:var(--txt3)">根节点没有标量字段</div>')+addRow('env',envLabel));
   }
   if(MODEL.main && MODEL.main.fields){
-    h+=groupCard('grpMain', MODEL.main.title||('tradeInfo 交易信息'), [],
-      '<div class="row head">'+HEAD+'</div>'+MODEL.main.fields.map(f=>fieldRow(f,'main')).join(''));
+    const mLabel=MODEL.main.title||('tradeInfo 交易信息');
+    h+=groupCard('grpMain', mLabel, [],
+      '<div class="row head">'+HEAD+'</div>'+MODEL.main.fields.map(f=>fieldRow(f,'main')).join('')+
+      addRow('main',mLabel));
   }
   (MODEL.objects||[]).forEach((o,i)=>{
-    h+=groupCard('grpObj'+i, o.title||o.key, [['对象','g']],
+    const oLabel=o.title||o.key;
+    h+=groupCard('grpObj'+i, oLabel, [['对象','g']],
       '<div class="row head">'+HEAD+'</div>'+
       (o.fields&&o.fields.length?o.fields.map(f=>fieldRow(f,'obj'+i)).join('')
-        :'<div style="padding:10px 12px;color:var(--txt3)">该对象没有标量字段</div>'));
+        :'<div style="padding:10px 12px;color:var(--txt3)">该对象没有标量字段</div>')+
+      addRow('obj'+i,oLabel));
   });
   MODEL.arrays.forEach(a=>{
     const cfg=ARRS[a.key];
@@ -1431,7 +1738,9 @@ function validate(){
   SCALARS.forEach(f=>{
     if(!f.r) return;
     if(f.cond) return;                       // 条件必填单独处理
-    if(TOPKEYS.includes(f.k)){
+    /* V1.14.0：顶层字段照旧只给黄色提醒；但用户手动把必填改成「必填」的字段要走下面的红字拦截，
+       否则「改成必填」等于没改（这正是文档与实物不一致时最需要的那个开关）。 */
+    if(TOPKEYS.includes(f.k) && !f.mreq){
       if(S.mode==='nested'&&(!on(f.k)||!val(f.k)))
         W.push(f.k+'（'+f.n+'）文档标注必填，当前未带或为空');
       return;
@@ -1492,6 +1801,20 @@ function validate(){
       &&(!S.ck[k]||!String(S.v[k]||'').trim())));
   });
   return E.length;
+}
+/* V1.14.0：只看「用户手动改成必填」的字段。文档原来标的必填不动，
+   免得老协议一打开就每次发送都弹窗（那些字段常常是服务端给默认值的）。 */
+function manualReqMissing(){
+  const out=[], on=k=>S.ck[k], val=k=>String(S.v[k]||'').trim();
+  SCALARS.forEach(f=>{
+    if(!f.mreq||!f.r||f.cond) return;
+    if(!on(f.k)) out.push({k:f.k, n:f.n||'', why:'没勾选'});
+    else if(!val(f.k)) out.push({k:f.k, n:f.n||'', why:'值为空'});
+  });
+  const conds=SCALARS.filter(f=>f.mreq&&f.r&&f.cond);
+  if(conds.length&&!conds.some(f=>on(f.k)&&val(f.k)))
+    out.push({k:conds.map(f=>f.k).join(' / '), n:'条件必填组', why:'整组一个都没传'});
+  return out;
 }
 function sync(){
   let n=0;SCALARS.forEach(f=>{if(S.ck[f.k])n++});
@@ -2936,6 +3259,23 @@ function apiSend(){
   if(!r.pass) return apiReject('请先填登录密码。');
   if(!r.svc) return apiReject('请选择或手填服务。');
   if(!r.mth) return apiReject('请选择或手填方法。');
+  /* V1.14.0：手动标成必填的字段没填，发之前拦一道（只拦你手动改的那几个，
+     文档原来标的必填仍只红字提示，不影响日常直达测试）。 */
+  const miss=manualReqMissing();
+  if(miss.length){
+    confirmBox({
+      title:'还有 '+miss.length+' 项必填没完成',
+      ok:'仍然发送',
+      html:'这些字段在协议里被标成了<b>必填</b>，现在没带上：'+
+        '<div class="cfkeep">'+miss.slice(0,12).map(m=>
+          '<label><span class="lbl"><b>'+esc(m.k)+'</b>'+
+          (m.n?'（'+esc(m.n)+'）':'')+' · '+esc(m.why)+'</span></label>').join('')+
+        (miss.length>12?'<label><span class="lbl">… 等 '+miss.length+' 项</span></label>':'')+'</div>'+
+        '<span class="warn">接口可能会直接报参数异常。确认要发就点「仍然发送」。</span>',
+      onOk:sendNow
+    });
+    return;
+  }
   /* V1.7.1：参数可以为空 —— 有些接口本来就不传参数，发出的就是 "params": ""。
      空参不再本地拦掉，但发之前确认一次，防止本想发报文却手滑点了发送。 */
   if(!r.params.trim()){
@@ -4122,7 +4462,9 @@ function applyModelToCurrent(m){
         opt={mode:S.mode,fmt:S.fmt,num:S.num,nul:S.nul,wrap:S.wrap,useWrap:S.useWrap};
   MODEL=m; recompute();
   const nb=blank();
-  SCALARS.forEach(f=>{ if(f.k in oldCk){ nb.ck[f.k]=!!oldCk[f.k];
+  /* V1.14.0 修：标了 off 的字段（校准/按报文补的「默认不发送」）不能被旧勾选状态套回去，
+     否则「勾选保留 = 默认不发送」这条承诺当场失效 —— 之前 oldCk 一律覆盖，标了也照勾。 */
+  SCALARS.forEach(f=>{ if(f.k in oldCk){ nb.ck[f.k]= f.off?false:!!oldCk[f.k];
     nb.v[f.k]=oldV[f.k]==null?'':oldV[f.k]; } });
   for(const a in nb.arr){
     const src=oldArr[a]; if(!src) continue;
@@ -4767,6 +5109,33 @@ document.addEventListener('change',e=>{
 });
 document.addEventListener('click',e=>{
   const t=e.target.closest('button');if(!t)return;
+  /* V1.14.0 字段结构编辑 */
+  if(t.classList.contains('kbtn')){
+    openFieldDlg(t.dataset.k,t.dataset.scope,false); return;
+  }
+  if(t.dataset.add){
+    openFieldDlg(null,t.dataset.add,true); return;
+  }
+  if(t.dataset.fd){
+    const a=t.dataset.fd;
+    if(a==='cancel'){ closeFd(); return }
+    if(a==='save'){ saveFieldDlg(); return }
+    if(a==='del'){
+      const k=FD.k, sc=FD.scope;
+      if(!k){ closeFd(); return }
+      closeFd();
+      confirmBox({
+        title:'删除字段 '+k+'？',
+        ok:'删除这个字段',
+        html:'删除后这份协议里就没有 <code>'+esc(k)+'</code> 了，导出也不会再带它。<br>'+
+             '已填的值不会丢 —— 会挪到「额外字段」里（默认不发送），想找回可以直接拷走。<br>'+
+             '<span class="warn">如果字段放错了，其实可以用「所在位置」把它挪到别的分组，不用删。</span>',
+        onOk:()=>delFieldNow(k,sc)
+      });
+      return;
+    }
+    return;
+  }
   if(t.dataset.cf){ if(t.dataset.cf==='yes') runConfirm(); else closeConfirm(); return }
   if(t.dataset.mul){
     if(t.dataset.mul==='cancel'){closeMulModal();return}
@@ -4922,6 +5291,53 @@ function copyOut(){
     document.body.removeChild(ta)}
 }
 $('inTxt').addEventListener('paste',()=>setTimeout(()=>doImport($('inTxt').value),0));
+/* ===================== V1.14.0 字段结构编辑的事件 ===================== */
+/* 必填三态：改完立即生效（不重绘整表，免得输入框丢焦点） */
+document.addEventListener('change',e=>{
+  const s=e.target;
+  if(s&&s.classList&&s.classList.contains('rqsel')){
+    const f=MAP[s.dataset.k]; if(!f) return;
+    const v=s.value;
+    if(v==='req'){ f.r=1; f.cond=0; f.mreq=1 }
+    else if(v==='cond'){ f.r=1; f.cond=1; f.mreq=1 }
+    else { f.r=0; f.cond=0; delete f.mreq }
+    s.classList.toggle('rq-y',v==='req');
+    s.classList.toggle('rq-c',v==='cond');
+    const row=s.closest('.row');
+    if(row){
+      const x=row.querySelector('.kx');
+      if(v==='no'){ if(x) x.remove() }
+      else if(!x){
+        const k=row.querySelector('.k');
+        const b=document.createElement('span');
+        b.className='kx'; b.title='这一项是手动改过必填的（不是文档原来标的）';
+        b.textContent='手动';
+        const btn=k&&k.querySelector('.kbtn');
+        if(btn) k.insertBefore(b,btn); else if(k) k.appendChild(b);
+      }
+    }
+    save(); sync();
+    return;
+  }
+  if(s&&s.id==='fdSlot'){
+    /* 换了分组：位置序号要按新分组的长度重排 */
+    fillFdPos(null); fdPathHint();
+  }
+});
+document.addEventListener('input',e=>{
+  if(e.target&&e.target.id==='fdKey') fdPathHint();
+});
+/* 双击键名也打开字段设置（比找铅笔图标顺手） */
+document.addEventListener('dblclick',e=>{
+  const cell=e.target.closest('.row .k'); if(!cell) return;
+  const row=cell.closest('.row');
+  if(!row||row.classList.contains('head')||!row.dataset.k) return;
+  e.preventDefault();
+  openFieldDlg(row.dataset.k,row.dataset.scope,false);
+});
+$('fdMask').addEventListener('mousedown',e=>{
+  if(e.target===$('fdMask')) closeFd();
+});
 /* V1.13.1：变更日志标题点击 / 回车 / 空格展开收起 */
 if($('chgHead')){
   $('chgHead').addEventListener('click',e=>{ e.preventDefault(); toggleChg() });
